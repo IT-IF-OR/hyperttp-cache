@@ -1,45 +1,9 @@
-import type {
-  HyperCore,
-  HyperPlugin,
-  InternalRequest,
-  HttpClientOptions,
-} from "@hyperttp/core";
+import type { HyperCore, HyperPlugin, InternalRequest } from "@hyperttp/core";
 import type { CacheManagerOptions } from "./types/cache.js";
 import { CacheManager } from "./utils/CacheManager.js";
 
-interface CacheableHyperCore extends HyperCore {
+export interface CacheableHyperCore extends HyperCore {
   clearCache?: () => void;
-}
-
-export function withCache(
-  client: HyperCore,
-  options: CacheManagerOptions,
-): CacheableHyperCore {
-  const cache = new CacheManager(options);
-  const next = client.dispatch;
-  const originalGetStats = client.getStats.bind(client);
-
-  client.getStats = () => ({
-    ...originalGetStats(),
-    cacheSize: cache.size ?? 0,
-  });
-
-  client.dispatch = async <T = any>(req: InternalRequest): Promise<T> => {
-    if (!req.isGet) return next(req) as T;
-
-    const urlString = typeof req.url === "string" ? req.url : req.url.getURL();
-    const cached = await cache.get(urlString);
-    if (cached !== undefined) return cached as T;
-
-    const result = await next(req);
-    if (result !== undefined) cache.set(urlString, result);
-    return result as T;
-  };
-
-  const extendedClient = client as CacheableHyperCore;
-  extendedClient.clearCache = () => cache.clear();
-
-  return extendedClient;
 }
 
 declare module "@hyperttp/core" {
@@ -50,12 +14,67 @@ declare module "@hyperttp/core" {
   }
 }
 
-export const CachePlugin: HyperPlugin = {
-  name: "hyperttp-cache",
-  phase: "CONTROL",
-  enabled: (config: HttpClientOptions) => !!config.cache?.enabled,
+export function withCache(): HyperPlugin {
+  let cache!: CacheManager;
 
-  apply: (client: HyperCore, config: HttpClientOptions) => {
-    return withCache(client, config.cache!);
-  },
-};
+  return {
+    name: "hyperttp-cache",
+    phase: "PREPARE",
+    enabled: (config) => !!config.cache?.enabled,
+
+    setup(core: CacheableHyperCore, config) {
+      cache = new CacheManager(config.cache!);
+
+      core.clearCache = () => cache.clear();
+
+      if (core && typeof core.getStats === "function") {
+        const originalGetStats = core.getStats.bind(core);
+        core.getStats = () => ({
+          ...originalGetStats(),
+          cacheSize: cache?.size ?? 0,
+        });
+      }
+    },
+
+    wrapDispatch: (next) => {
+      return async <T = any>(req: InternalRequest): Promise<T> => {
+        if (req.method !== "GET") return next(req) as Promise<T>;
+
+        const cached = await cache.get(req.url);
+        if (cached !== undefined) {
+          return (
+            typeof (cached as any).clone === "function"
+              ? (cached as any).clone()
+              : cached
+          ) as T;
+        }
+
+        const result = await next(req);
+
+        if (result !== undefined) {
+          const valueToCache =
+            typeof (result as any).clone === "function"
+              ? (result as any).clone()
+              : result;
+
+          const headers = (result as any).headers;
+          if (headers) {
+            const etag = headers["etag"] || headers["ETag"];
+            const lastModified =
+              headers["last-modified"] || headers["Last-Modified"];
+
+            cache.setWithMetadata(req.url, valueToCache, {
+              etag: typeof etag === "string" ? etag : undefined,
+              lastModified:
+                typeof lastModified === "string" ? lastModified : undefined,
+            });
+          } else {
+            cache.set(req.url, valueToCache);
+          }
+        }
+
+        return result as T;
+      };
+    },
+  };
+}

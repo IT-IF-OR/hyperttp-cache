@@ -1,6 +1,6 @@
 {
   "name": "@hyperttp/cache",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "High-performance LRU caching plugin for Hyperttp client",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
     "url": "git+https://github.com/IT-IF-OR/hyperttp-cache.git"
   },
   "dependencies": {
-    "@hyperttp/core": "^1.0.5",
+    "@hyperttp/core": "^1.1.2",
     "lru-cache": "^11.5.0"
   },
   "devDependencies": {
@@ -31,14 +31,19 @@
     "vitest": "latest",
     "prettier": "latest",
     "eslint": "latest",
+    "@dirold2/dev-tools": "^1.0.12",
     "jiti": "^2.7.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && d-build",
+    "dist": "d-dist",
+    "deploy": "npm run build && npm run dist",
+    "publish-npm": "d-publish",
     "typecheck": "tsc --noEmit",
     "lint": "eslint 'src/**/*.{ts,js}'",
     "format": "prettier --write .",
     "test": "vitest run",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
   }
 }
