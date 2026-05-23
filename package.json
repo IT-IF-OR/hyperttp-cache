@@ -1,6 +1,6 @@
 {
   "name": "@hyperttp/cache",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "High-performance LRU caching plugin for Hyperttp client",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
     "url": "git+https://github.com/IT-IF-OR/hyperttp-cache.git"
   },
   "dependencies": {
-    "@hyperttp/core": "^1.1.2",
+    "@hyperttp/core": "^1",
     "lru-cache": "^11.5.0"
   },
   "devDependencies": {
