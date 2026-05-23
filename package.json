@@ -1,6 +1,6 @@
 {
   "name": "@hyperttp/cache",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "High-performance LRU caching plugin for Hyperttp client",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,7 @@
     "build": "tsc && d-build",
     "dist": "d-dist",
     "deploy": "npm run build && npm run dist",
-    "publish-npm": "d-publish",
+    "publish": "d-publish",
     "typecheck": "tsc --noEmit",
     "lint": "eslint 'src/**/*.{ts,js}'",
     "format": "prettier --write .",
