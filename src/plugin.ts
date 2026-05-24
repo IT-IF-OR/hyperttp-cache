@@ -68,18 +68,15 @@ export function withCache(): HyperPlugin {
         }
 
         const cacheKey = req.url;
-
         const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
 
         if (cachedEntry !== undefined) {
           if (cachedEntry.etag || cachedEntry.lastModified) {
             req.headers = { ...req.headers };
-            if (cachedEntry.etag) {
+            if (cachedEntry.etag)
               req.headers["if-none-match"] = cachedEntry.etag;
-            }
-            if (cachedEntry.lastModified) {
+            if (cachedEntry.lastModified)
               req.headers["if-modified-since"] = cachedEntry.lastModified;
-            }
           } else {
             return Promise.resolve(
               isCloneable(cachedEntry.data)
