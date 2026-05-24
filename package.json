@@ -1,6 +1,6 @@
 {
   "name": "@hyperttp/cache",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "High-performance LRU caching plugin for Hyperttp client",
   "type": "module",
   "main": "./dist/index.js",
