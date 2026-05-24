@@ -4,7 +4,6 @@ import type {
   HttpClientOptions,
   HttpResponse,
   PluginContext,
-  Cloneable,
 } from "@hyperttp/core";
 import type { CacheManagerOptions } from "./types/cache.js";
 import { CacheManager } from "./utils/CacheManager.js";
@@ -23,15 +22,45 @@ declare module "@hyperttp/core" {
   }
 }
 
-function isCloneable<T>(obj: any): obj is Cloneable<T> {
-  return typeof obj?.clone === "function";
+function safeCloneResponse(response: any): any {
+  if (!response) return response;
+
+  const cloned: any = {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers ? { ...response.headers } : {},
+  };
+
+  if (response.data !== undefined) cloned.data = structuredClone(response.data);
+  if (response.body !== undefined) cloned.body = structuredClone(response.body);
+
+  for (const key of Object.keys(response)) {
+    if (
+      key !== "headers" &&
+      key !== "data" &&
+      key !== "body" &&
+      key !== "clone"
+    ) {
+      cloned[key] = response[key];
+    }
+  }
+
+  Object.defineProperty(cloned, "clone", {
+    value: function (this: any) {
+      return safeCloneResponse(this);
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+
+  return cloned;
 }
 
 export function withCache(): HyperPlugin {
   let cache: CacheManager;
   let allowedMethods: Set<string>;
   const inFlight = new Map<string, Promise<any>>();
-  let errorCount = 0;
 
   return {
     name: "hyperttp-cache",
@@ -74,11 +103,7 @@ export function withCache(): HyperPlugin {
         const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
         if (cachedEntry !== undefined) {
           if (!cachedEntry.etag && !cachedEntry.lastModified) {
-            return Promise.resolve(
-              isCloneable(cachedEntry.data)
-                ? cachedEntry.data.clone()
-                : cachedEntry.data,
-            );
+            return Promise.resolve(safeCloneResponse(cachedEntry.data));
           }
 
           req.headers = { ...req.headers };
@@ -98,15 +123,11 @@ export function withCache(): HyperPlugin {
             if (!response) return response;
 
             if (response.status === 304 && cachedEntry !== undefined) {
-              return isCloneable(cachedEntry.data)
-                ? cachedEntry.data.clone()
-                : cachedEntry.data;
+              return safeCloneResponse(cachedEntry.data);
             }
 
             if (response.status >= 200 && response.status < 300) {
-              const valueToCache = isCloneable(response)
-                ? response.clone()
-                : response;
+              const valueToCache = safeCloneResponse(response);
               const headers = response.headers;
               const etag = headers?.["etag"] || headers?.["ETag"];
               const lastModified =
@@ -123,12 +144,6 @@ export function withCache(): HyperPlugin {
           })
           .catch((err) => {
             inFlight.delete(cacheKey);
-
-            if (errorCount < 3) {
-              console.error("\n[CACHE PLUGIN CRASH REPORT]:", err);
-              errorCount++;
-            }
-
             throw err;
           });
 
