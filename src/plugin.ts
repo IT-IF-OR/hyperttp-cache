@@ -30,8 +30,8 @@ function isCloneable<T>(obj: any): obj is Cloneable<T> {
 export function withCache(): HyperPlugin {
   let cache: CacheManager;
   let allowedMethods: Set<string>;
-  // Хранилище для промисов запросов, которые уже в пути
   const inFlight = new Map<string, Promise<any>>();
+  let errorCount = 0;
 
   return {
     name: "hyperttp-cache",
@@ -123,6 +123,12 @@ export function withCache(): HyperPlugin {
           })
           .catch((err) => {
             inFlight.delete(cacheKey);
+
+            if (errorCount < 3) {
+              console.error("\n[CACHE PLUGIN CRASH REPORT]:", err);
+              errorCount++;
+            }
+
             throw err;
           });
 
