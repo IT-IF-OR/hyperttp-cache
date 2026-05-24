@@ -23,6 +23,12 @@
   "peerDependencies": {
     "@hyperttp/core": "^1.1.8"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "globals": "^17.6.0",
