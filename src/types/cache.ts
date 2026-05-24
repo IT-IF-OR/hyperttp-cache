@@ -7,6 +7,12 @@ export type Method =
   | "DELETE"
   | "HEAD";
 
+export interface CacheEntry<T> {
+  data: T;
+  etag?: string;
+  lastModified?: string;
+}
+
 export interface CacheManagerOptions {
   /**
    * @ru Включить кэш

@@ -54,14 +54,9 @@ export class CacheManager {
    * @param key Cache key
    * @returns Cached entry with metadata or undefined
    */
-  getWithMetadata<T>(key: string):
-    | {
-        data: T;
-        etag?: string;
-        lastModified?: string;
-      }
-    | undefined {
-    return this.cache.get(key);
+  getWithMetadata<T>(key: string): CacheEntry<T> | undefined {
+    const entry = this.cache.get(key);
+    return entry ? (entry as CacheEntry<T>) : undefined;
   }
 
   /**

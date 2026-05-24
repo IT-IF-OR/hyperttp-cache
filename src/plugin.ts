@@ -4,6 +4,7 @@ import type {
   HttpClientOptions,
   HttpResponse,
   PluginContext,
+  Cloneable,
 } from "@hyperttp/core";
 import type { CacheManagerOptions } from "./types/cache.js";
 import { CacheManager } from "./utils/CacheManager.js";
@@ -17,6 +18,13 @@ declare module "@hyperttp/core" {
       enabled: boolean;
     };
   }
+  interface HyperCore {
+    clearCache(key?: string): void;
+  }
+}
+
+function isCloneable<T>(obj: any): obj is Cloneable<T> {
+  return typeof obj?.clone === "function";
 }
 
 export function withCache(): HyperPlugin {
@@ -29,7 +37,7 @@ export function withCache(): HyperPlugin {
     enabled: (config: HttpClientOptions) => !!config.cache?.enabled,
 
     setup(ctx: PluginContext) {
-      const { core, config } = ctx as any;
+      const { core, config } = ctx;
 
       cache = new CacheManager(config?.cache);
       ctx.cache = cache;
@@ -39,14 +47,18 @@ export function withCache(): HyperPlugin {
 
       if (core && typeof core.getStats === "function") {
         const originalGetStats = core.getStats;
-        core.getStats = function (this: any) {
+        core.getStats = function (this) {
           const stats = originalGetStats.call(this);
           if (stats) {
-            (stats as any).cacheSize = cache.size;
+            stats.cacheSize = cache.size;
           }
           return stats;
         };
       }
+
+      core.clearCache = (key?: string) => {
+        return key ? cache.delete(key) : cache.clear();
+      };
     },
 
     wrapDispatch: (next) => {
@@ -70,8 +82,8 @@ export function withCache(): HyperPlugin {
             }
           } else {
             return Promise.resolve(
-              typeof (cachedEntry.data as any).clone === "function"
-                ? (cachedEntry.data as any).clone()
+              isCloneable(cachedEntry.data)
+                ? cachedEntry.data.clone()
                 : cachedEntry.data,
             );
           }
@@ -81,18 +93,15 @@ export function withCache(): HyperPlugin {
           if (!response) return response;
 
           if (response.status === 304 && cachedEntry !== undefined) {
-            return (
-              typeof (cachedEntry.data as any).clone === "function"
-                ? (cachedEntry.data as any).clone()
-                : cachedEntry.data
-            ) as HttpResponse<T>;
+            return isCloneable(cachedEntry.data)
+              ? cachedEntry.data.clone()
+              : cachedEntry.data;
           }
 
           if (response.status >= 200 && response.status < 300) {
-            const valueToCache =
-              typeof (response as any).clone === "function"
-                ? (response as any).clone()
-                : response;
+            const valueToCache = isCloneable(response)
+              ? response.clone()
+              : response;
 
             const headers = response.headers;
             const etag = headers?.["etag"] || headers?.["ETag"];
