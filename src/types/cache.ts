@@ -1,11 +1,4 @@
-export type Method =
-  | "GET"
-  | "POST"
-  | "PUT"
-  | "PATCH"
-  | "OPTIONS"
-  | "DELETE"
-  | "HEAD";
+import { Method } from "@hyperttp/core";
 
 export interface CacheEntry<T> {
   data: T;
