@@ -22,41 +22,6 @@ declare module "@hyperttp/core" {
   }
 }
 
-function safeCloneResponse(response: any): any {
-  if (!response) return response;
-
-  const cloned: any = {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers ? { ...response.headers } : {},
-  };
-
-  if (response.data !== undefined) cloned.data = structuredClone(response.data);
-  if (response.body !== undefined) cloned.body = structuredClone(response.body);
-
-  for (const key of Object.keys(response)) {
-    if (
-      key !== "headers" &&
-      key !== "data" &&
-      key !== "body" &&
-      key !== "clone"
-    ) {
-      cloned[key] = response[key];
-    }
-  }
-
-  Object.defineProperty(cloned, "clone", {
-    value: function (this: any) {
-      return safeCloneResponse(this);
-    },
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-
-  return cloned;
-}
-
 export function withCache(): HyperPlugin {
   let cache: CacheManager;
   let allowedMethods: Set<string>;
@@ -103,7 +68,7 @@ export function withCache(): HyperPlugin {
         const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
         if (cachedEntry !== undefined) {
           if (!cachedEntry.etag && !cachedEntry.lastModified) {
-            return Promise.resolve(safeCloneResponse(cachedEntry.data));
+            return Promise.resolve(cachedEntry.data.clone());
           }
 
           req.headers = { ...req.headers };
@@ -123,11 +88,11 @@ export function withCache(): HyperPlugin {
             if (!response) return response;
 
             if (response.status === 304 && cachedEntry !== undefined) {
-              return safeCloneResponse(cachedEntry.data);
+              return cachedEntry.data.clone();
             }
 
             if (response.status >= 200 && response.status < 300) {
-              const valueToCache = safeCloneResponse(response);
+              const valueToCache = response.clone();
               const headers = response.headers;
               const etag = headers?.["etag"] || headers?.["ETag"];
               const lastModified =
