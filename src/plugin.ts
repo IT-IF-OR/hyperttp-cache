@@ -3,81 +3,111 @@ import type {
   InternalRequest,
   HttpClientOptions,
   HttpResponse,
+  PluginContext,
 } from "@hyperttp/core";
 import type { CacheManagerOptions } from "./types/cache.js";
 import { CacheManager } from "./utils/CacheManager.js";
 
 declare module "@hyperttp/core" {
+  interface PluginContext {
+    cache?: CacheManager;
+  }
   interface HttpClientOptions {
     cache?: CacheManagerOptions & {
       enabled: boolean;
     };
   }
-
-  interface HyperCore {
-    clearCache?: () => void;
-  }
 }
 
 export function withCache(): HyperPlugin {
-  let cache!: CacheManager;
+  let cache: CacheManager;
+  let allowedMethods: Set<string>;
 
   return {
     name: "hyperttp-cache",
     phase: "PREPARE",
     enabled: (config: HttpClientOptions) => !!config.cache?.enabled,
 
-    setup(core, config) {
-      cache = new CacheManager(config.cache!);
-      core.clearCache = () => cache.clear();
+    setup(ctx: PluginContext) {
+      const { core, config } = ctx as any;
+
+      cache = new CacheManager(config?.cache);
+      ctx.cache = cache;
+
+      const methods = config?.cache?.methods ?? ["GET"];
+      allowedMethods = new Set(methods.map((m: string) => m.toUpperCase()));
+
       if (core && typeof core.getStats === "function") {
-        const originalGetStats = core.getStats.bind(core);
-        core.getStats = () => ({
-          ...originalGetStats(),
-          cacheSize: cache?.size ?? 0,
-        });
+        const originalGetStats = core.getStats;
+        core.getStats = function (this: any) {
+          const stats = originalGetStats.call(this);
+          if (stats) {
+            (stats as any).cacheSize = cache.size;
+          }
+          return stats;
+        };
       }
     },
 
     wrapDispatch: (next) => {
-      return async <T>(req: InternalRequest): Promise<HttpResponse<T>> => {
-        if (req.method !== "GET") return next<T>(req);
-
-        const cached = await cache.get(req.url);
-        if (cached !== undefined) {
-          return (
-            typeof (cached as any).clone === "function"
-              ? (cached as any).clone()
-              : cached
-          ) as HttpResponse<T>;
+      return <T>(req: InternalRequest): Promise<HttpResponse<T>> => {
+        if (!allowedMethods.has(req.method.toUpperCase())) {
+          return next<T>(req);
         }
 
-        const response = await next<T>(req);
+        const cacheKey = req.url;
 
-        if (response !== undefined) {
-          const valueToCache =
-            typeof (response as any).clone === "function"
-              ? (response as any).clone()
-              : response;
+        const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
 
-          const headers = response.headers;
+        if (cachedEntry !== undefined) {
+          if (cachedEntry.etag || cachedEntry.lastModified) {
+            req.headers = { ...req.headers };
+            if (cachedEntry.etag) {
+              req.headers["if-none-match"] = cachedEntry.etag;
+            }
+            if (cachedEntry.lastModified) {
+              req.headers["if-modified-since"] = cachedEntry.lastModified;
+            }
+          } else {
+            return Promise.resolve(
+              typeof (cachedEntry.data as any).clone === "function"
+                ? (cachedEntry.data as any).clone()
+                : cachedEntry.data,
+            );
+          }
+        }
 
-          if (headers) {
-            const etag = headers["etag"] || headers["ETag"];
+        return next<T>(req).then((response) => {
+          if (!response) return response;
+
+          if (response.status === 304 && cachedEntry !== undefined) {
+            return (
+              typeof (cachedEntry.data as any).clone === "function"
+                ? (cachedEntry.data as any).clone()
+                : cachedEntry.data
+            ) as HttpResponse<T>;
+          }
+
+          if (response.status >= 200 && response.status < 300) {
+            const valueToCache =
+              typeof (response as any).clone === "function"
+                ? (response as any).clone()
+                : response;
+
+            const headers = response.headers;
+            const etag = headers?.["etag"] || headers?.["ETag"];
             const lastModified =
-              headers["last-modified"] || headers["Last-Modified"];
+              headers?.["last-modified"] || headers?.["Last-Modified"];
 
-            cache.setWithMetadata(req.url, valueToCache, {
+            cache.setWithMetadata(cacheKey, valueToCache, {
               etag: typeof etag === "string" ? etag : undefined,
               lastModified:
                 typeof lastModified === "string" ? lastModified : undefined,
             });
-          } else {
-            cache.set(req.url, valueToCache);
           }
-        }
 
-        return response;
+          return response;
+        });
       };
     },
   };
