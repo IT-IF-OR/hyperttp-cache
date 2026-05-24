@@ -30,6 +30,8 @@ function isCloneable<T>(obj: any): obj is Cloneable<T> {
 export function withCache(): HyperPlugin {
   let cache: CacheManager;
   let allowedMethods: Set<string>;
+  // Хранилище для промисов запросов, которые уже в пути
+  const inFlight = new Map<string, Promise<any>>();
 
   return {
     name: "hyperttp-cache",
@@ -38,7 +40,6 @@ export function withCache(): HyperPlugin {
 
     setup(ctx: PluginContext) {
       const { core, config } = ctx;
-
       cache = new CacheManager(config?.cache);
       ctx.cache = cache;
 
@@ -63,57 +64,70 @@ export function withCache(): HyperPlugin {
 
     wrapDispatch: (next) => {
       return <T>(req: InternalRequest): Promise<HttpResponse<T>> => {
-        if (!allowedMethods.has(req.method.toUpperCase())) {
+        const method = req.method.toUpperCase();
+        if (!allowedMethods.has(method)) {
           return next<T>(req);
         }
 
         const cacheKey = req.url;
-        const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
 
+        const cachedEntry = cache.getWithMetadata<HttpResponse<T>>(cacheKey);
         if (cachedEntry !== undefined) {
-          if (cachedEntry.etag || cachedEntry.lastModified) {
-            req.headers = { ...req.headers };
-            if (cachedEntry.etag)
-              req.headers["if-none-match"] = cachedEntry.etag;
-            if (cachedEntry.lastModified)
-              req.headers["if-modified-since"] = cachedEntry.lastModified;
-          } else {
+          if (!cachedEntry.etag && !cachedEntry.lastModified) {
             return Promise.resolve(
               isCloneable(cachedEntry.data)
                 ? cachedEntry.data.clone()
                 : cachedEntry.data,
             );
           }
+
+          req.headers = { ...req.headers };
+          if (cachedEntry.etag) req.headers["if-none-match"] = cachedEntry.etag;
+          if (cachedEntry.lastModified)
+            req.headers["if-modified-since"] = cachedEntry.lastModified;
         }
 
-        return next<T>(req).then((response) => {
-          if (!response) return response;
+        if (inFlight.has(cacheKey)) {
+          return inFlight.get(cacheKey)!;
+        }
 
-          if (response.status === 304 && cachedEntry !== undefined) {
-            return isCloneable(cachedEntry.data)
-              ? cachedEntry.data.clone()
-              : cachedEntry.data;
-          }
+        const requestPromise = next<T>(req)
+          .then((response) => {
+            inFlight.delete(cacheKey);
 
-          if (response.status >= 200 && response.status < 300) {
-            const valueToCache = isCloneable(response)
-              ? response.clone()
-              : response;
+            if (!response) return response;
 
-            const headers = response.headers;
-            const etag = headers?.["etag"] || headers?.["ETag"];
-            const lastModified =
-              headers?.["last-modified"] || headers?.["Last-Modified"];
+            if (response.status === 304 && cachedEntry !== undefined) {
+              return isCloneable(cachedEntry.data)
+                ? cachedEntry.data.clone()
+                : cachedEntry.data;
+            }
 
-            cache.setWithMetadata(cacheKey, valueToCache, {
-              etag: typeof etag === "string" ? etag : undefined,
-              lastModified:
-                typeof lastModified === "string" ? lastModified : undefined,
-            });
-          }
+            if (response.status >= 200 && response.status < 300) {
+              const valueToCache = isCloneable(response)
+                ? response.clone()
+                : response;
+              const headers = response.headers;
+              const etag = headers?.["etag"] || headers?.["ETag"];
+              const lastModified =
+                headers?.["last-modified"] || headers?.["Last-Modified"];
 
-          return response;
-        });
+              cache.setWithMetadata(cacheKey, valueToCache, {
+                etag: typeof etag === "string" ? etag : undefined,
+                lastModified:
+                  typeof lastModified === "string" ? lastModified : undefined,
+              });
+            }
+
+            return response;
+          })
+          .catch((err) => {
+            inFlight.delete(cacheKey);
+            throw err;
+          });
+
+        inFlight.set(cacheKey, requestPromise);
+        return requestPromise;
       };
     },
   };
