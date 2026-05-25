@@ -1,6 +1,6 @@
 {
   "name": "@hyperttp/cache",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "description": "High-performance LRU caching plugin for Hyperttp client",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,12 +22,6 @@
   },
   "peerDependencies": {
     "@hyperttp/core": "^1.1.8"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
