@@ -12,7 +12,7 @@ declare module "@hyperttp/core" {
   interface PluginContext {
     cache?: CacheManager;
   }
-  interface HttpClientOptions {
+  interface HyperttpPluginsExtension {
     cache?: CacheManagerOptions & {
       enabled: boolean;
     };
