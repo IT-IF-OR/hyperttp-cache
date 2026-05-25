@@ -30,9 +30,3 @@ export interface CacheManagerOptions {
    */
   methods?: readonly Method[];
 }
-
-export interface CacheEntry<T> {
-  data: T;
-  etag?: string;
-  lastModified?: string;
-}
