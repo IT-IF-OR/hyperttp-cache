@@ -1,12 +1,12 @@
 # hyperttp-cache
 
-> English | [Русский](https://github.com/IT-IF-OR/hyperttp-cache/tree/main/lang/ru)
+> [English](https://github.com/IT-IF-OR/hyperttp-cache) | Русский
 
 ---
 
-## 🌐 Language
+## 🌐 Language / Язык
 
-- 🇺🇸 English
+- 🇺🇸 [English](https://github.com/IT-IF-OR/hyperttp-cache)
 - 🇷🇺 [Русский](https://github.com/IT-IF-OR/hyperttp-cache/tree/main/lang/ru)
 
 ---

@@ -1,4 +1,4 @@
-import { Method } from "@hyperttp/core";
+import { Method } from "@hyperttp/types";
 
 export interface CacheEntry<T> {
   data: T;
