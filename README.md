@@ -1,6 +1,7 @@
+```markdown
 # hyperttp-cache
 
-> English | [Русский](https://github.com/IT-IF-OR/hyperttp-cache/tree/main/lang/ru)
+> [Русский](https://github.com/IT-IF-OR/hyperttp-cache/tree/main/lang/ru) | English
 
 ---
 
@@ -11,45 +12,45 @@
 
 ---
 
-Сверхбыстрый, изоморфный плагин кэширования и дедупликации параллельных запросов для высокопроизводительного
-HTTP-клиента `Hyperttp`. Оптимизирован для рантаймов **Bun** и **Node.js**.
+Blazing fast, isomorphic cache management and concurrent request deduplication plugin for the high-performance
+`Hyperttp` HTTP client. Optimized for **Bun** and **Node.js** runtimes.
 
-Плагин бесшовно встраивается в плоский конвейер жизненного цикла `HyperCore`, защищая сервер от лавинообразной
-нагрузки (**Cache Stampede Protection**) и предоставляя умное in-memory хранилище на базе стратегии
-**LRU (Least Recently Used)**.
-
----
-
-## 🔥 Ключевые фичи
-
-- 🧠 **LRU-стратегия с поддержкой TTL:** Автоматическое вытеснение старых записей при достижении лимита. При каждом
-  `GET`-запросе возраст записи сбрасывается (`updateAgeOnGet: true`), удерживая горячие данные в памяти.
-- 🚀 **In-Flight Deduplication:** Веерные параллельные запросы на один и тот же URL группируются в один сетевой
-  hot path. Ответ клонируется и раздается всем подписчикам одновременно.
-- 🔄 **HTTP Revalidation:** Полная поддержка проверок свежести по `ETag` (`If-None-Match`) и `Last-Modified`
-  (`If-Modified-Since`). Автоматически гидрирует пустые `304` ответы актуальным телом из памяти.
-- 🛡️ **Безопасность при сбоях:** При возникновении сетевых ошибок пул ожидания мгновенно разрывается (`onError`),
-  разблокируя повторные попытки запросов.
-- 📊 **Расширение Ядра:** Автоматически инжектирует методы управления кэшем (`clearCache`) и добавляет метрику
-  `cacheSize` в системную статистику `getStats()`.
+The plugin seamlessly integrates into the flat `HyperCore` lifecycle pipeline, protecting your backend from server
+breakdown (**Cache Stampede Protection**) and providing smart in-memory storage based on the **LRU (Least Recently Used)**
+strategy.
 
 ---
 
-## 📦 Установка
+## 🔥 Key Features
+
+- 🧠 **LRU Strategy with TTL Support:** Automatically evicts old entries when reaching limits. With every `GET`
+  request, the entry age resets (`updateAgeOnGet: true`), keeping hot data cached in memory.
+- 🚀 **In-Flight Deduplication:** Concurrent fan-out requests targeting the same URL are grouped into a single network
+  hot path. The response is cloned and distributed to all waiting subscribers simultaneously.
+- 🔄 **HTTP Revalidation:** Full freshness verification support via `ETag` (`If-None-Match`) and `Last-Modified`
+  (`If-Modified-Since`). Automatically re-hydrates empty `304` responses with cached data bodies.
+- 🛡️ **Fail-Safe Processing:** When network processing exceptions occur, the in-flight waiting pool is instantly
+  purged (`onError`), unblocking immediate subsequent retry attempts.
+- 📊 **Core Extension:** Automatically injects cache management methods (`clearCache`) and appends a `cacheSize`
+  telemetry metric into the core `getStats()` architecture.
+
+---
+
+## 📦 Installation
 
 ```bash
 bun add hyperttp-cache
-# или
+# or
 npm install hyperttp-cache
 
 ```
 
 ---
 
-## 🚀 Быстрый старт
+## 🚀 Quick Start
 
-Просто импортируйте фабрику `withCache` и передайте её в массив плагинов вашего клиента. Настройки кэша
-передаются в глобальный конфиг.
+Simply import the `withCache` factory and append it to your client's plugin array. Cache configurations are
+passed directly within the global options block.
 
 ```typescript
 import { createClient } from "@hyperttp/core";
@@ -59,75 +60,83 @@ const client = createClient({
   plugins: [withCache()],
   cache: {
     enabled: true,
-    ttl: 60_000, // 1 минута (по умолчанию 300_000 мс)
-    maxSize: 1000, // Лимит в 1000 элементов (по умолчанию 500)
-    methods: ["GET"], // HTTP-методы, разрешенные для кэширования
+    ttl: 60_000,       // 1 minute (defaults to 300_000 ms)
+    maxSize: 1000,    // Limit to 1000 items (defaults to 500)
+    methods: ["GET"], // HTTP methods authorized for downstream caching
   },
 });
 
-// 1. Первый запрос уходит в сеть и наполняет кэш
+// 1. The first request goes out to the network and populates the cache
 const res1 = await client.get("/api/data");
 
-// 2. Второй последующий запрос вернет изолированный клон из кэша
+// 2. Subsequent requests instantly return an isolated clone from the cache
 const res2 = await client.get("/api/data");
+
 ```
 
 ---
 
-## ⚙️ Параметры конфигурации (`CacheManagerOptions`)
+## ⚙️ Configuration Options (`CacheManagerOptions`)
 
-Конфигурация плагина полностью типизирована и расширяет интерфейс настроек клиента:
+The plugin configuration layer is fully typed and extends the default client option interfaces:
 
-| Параметр        | Тип        | По умолчанию      | Описание                                                         |
-| --------------- | ---------- | ----------------- | ---------------------------------------------------------------- |
-| `cache.enabled` | `boolean`  | `false`           | Флаг активации/деактивации слоя кэширования.                     |
-| `cache.ttl`     | `number`   | `300_000` (5 мин) | Время жизни записи в кэше (в миллисекундах).                     |
-| `cache.maxSize` | `number`   | `500`             | Максимальное количество записей в LRU-кэше до начала вытеснения. |
-| `cache.methods` | `Method[]` | `["GET"]`         | Массив HTTP-методов, для которых разрешено кэширование ответов.  |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cache.enabled` | `boolean` | `false` | Activation status flag for the caching layer. |
+| `cache.ttl` | `number` | `300_000` (5 min) | Cache entry time-to-live threshold (in milliseconds). |
+| `cache.maxSize` | `number` | `500` | Maximum entries allowed inside the LRU pool before eviction begins. |
+| `cache.methods` | `Method[]` | `["GET"]` | Array of HTTP methods authorized for response interception. |
 
 ---
 
-## 🛠️ API Расширения Ядра
+## 🛠️ Core API Extensions
 
-Плагин расширяет глобальные интерфейсы декларации типов `@hyperttp/types`. Вам становятся доступны следующие
-методы прямо из инстанса ядра:
+The plugin extends the global `@hyperttp/types` interface declarations. The following lifecycle methods become
+directly accessible via the client core instance:
 
-### Очистка кэша
+### Purging Cache
 
 ```typescript
-// Очистить кэш полностью
+// Purge the entire cache system
 client.clearCache();
 
-// Удалить конкретный URL из кэша
+// Evict a specific URL key from the storage
 client.clearCache("/api/data");
+
 ```
 
-### Телеметрия
+### Telemetry
 
-Если ваше ядро поддерживает метод `getStats()`, плагин автоматически подмешает туда текущий размер кэша:
+If your core implementation supports the `getStats()` routine, the plugin automatically appends the current cache size:
 
 ```typescript
 const stats = client.getStats();
-console.log(stats.cacheSize); // Выведет текущее количество записей в LRU-хранилище
+console.log(stats.cacheSize); // Outputs the current number of active entries inside the LRU storage
+
 ```
 
 ---
 
-## 📐 Архитектура жизненного цикла
+## 📐 Lifecycle Architecture
 
-Плагин использует атомарные независимые хуки вместо тяжелых middleware-оберток:
+The plugin utilizes atomic, decoupled lifecycle hooks instead of overhead-heavy middleware wrappers:
 
-1. **`onRequest`**: Проверяет наличие точного совпадения в `CacheManager`. Если запись свежая и не требует
-   проверки сервера — возвращает её клон, завершая цепочку. Если идет активный запрос к этому же URL — подписывается
-   на его `Promise`. Если запись требует валидации, подмешает заголовки `If-None-Match` / `If-Modified-Since`.
-2. **`onResponse`**: Перехватывает успешные ответы. Превращает пустой `304 Not Modified` обратно в полноценный
-   `200 OK`, восстанавливая данные из локальной памяти. Записывает новые `200` ответы с валидными ETag. Разрешает
-   (resolves) ожидания всех `In-Flight` подписчиков.
-3. **`onError`**: В случае сетевого сбоя вычищает карту активных задач, чтобы не заблокировать последующие
-   повторные вызовы к упавшему эндпоинту.
+1. **`onRequest`**: Evaluates local key hits inside the `CacheManager`. If the matching record is fresh and doesn't
+require validation, it returns a clone, short-circuiting the chain. If a concurrent request to the same URL is active,
+it hooks into its matching follower `Promise`. If a partial hit requires validation, it appends conditional headers
+(`If-None-Match` / `If-Modified-Since`).
+2. **`onResponse`**: Intercepts successful downstream outputs. Re-hydrates an empty `304 Not Modified` status code
+back into a full `200 OK` response by recovering body content from memory. Saves valid `200` ranges containing validation
+metadata and resolves execution triggers for all waiting `In-Flight` threads.
+3. **`onError`**: In the event of a critical network failure, it instantly flushes matching active tracking task entries
+from the map to ensure subsequent retries targeting the failed endpoint are never deadlocked.
 
 ---
 
-## 📄 Лицензия
+## 📄 License
 
 MIT
+
+```
+
+```
