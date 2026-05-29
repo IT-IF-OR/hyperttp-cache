@@ -2,34 +2,90 @@ import type {
   HttpClientOptions,
   HttpResponse,
   HyperPlugin,
-  IHyperCore,
   PluginContext,
   InternalRequest,
   HyperttpError,
 } from "@hyperttp/types";
 
-import type { CacheManagerOptions } from "./types/cache.js";
+import type {
+  CacheManagerOptions,
+  LightweightResponse,
+} from "./types/cache.js";
 import { CacheManager } from "./utils/CacheManager.js";
 
+/**
+ * @en Extends the PluginContext to include the cache manager instance.
+ * @ru Расширяет PluginContext, добавляя экземпляр менеджера кэша.
+ */
 declare module "@hyperttp/types" {
   interface PluginContext {
-    cache?: CacheManager;
+    /**
+     * @en The active cache manager instance.
+     * @ru Активный экземпляр менеджера кэша.
+     */
+    cache?: CacheManager<LightweightResponse>;
   }
+
+  /**
+   * @en Extends HyperttpPluginsExtension to include cache configuration options.
+   * @ru Расширяет HyperttpPluginsExtension, добавляя опции конфигурации кэша.
+   */
   interface HyperttpPluginsExtension {
+    /**
+     * @en Cache configuration and enablement flags.
+     * @ru Конфигурация кэша и флаги включения.
+     */
     cache?: CacheManagerOptions & {
+      /**
+       * @en Enables or disables the caching plugin.
+       * @ru Включает или отключает плагин кэширования.
+       */
       enabled: boolean;
+      /**
+       * @en List of HTTP methods allowed for caching (e.g., ["GET"]).
+       * @ru Список HTTP-методов, разрешенных для кэширования (например, ["GET"]).
+       */
+      methods?: string[];
     };
   }
+
+  /**
+   * @en Extends IHyperCore with cache management methods.
+   * @ru Расширяет IHyperCore методами управления кэшем.
+   */
   interface IHyperCore {
+    /**
+     * @en Clears the cache. If a key is provided, only that entry is removed.
+     * @ru Очищает кэш. Если указан ключ, удаляется только соответствующая запись.
+     * @param key - Optional cache key to delete.
+     */
     clearCache(key?: string): void;
+
+    /**
+     * @en Returns runtime statistics, including cache size.
+     * @ru Возвращает статистику выполнения, включая размер кэша.
+     */
     getStats?(): Record<string, any>;
   }
 }
 
 /**
- * @internal
- * @ru Структура отложенного управления результатом выполнения для дедупликации параллельных запросов (In-Flight).
- * @en Deferred execution trigger structure used for handling concurrent in-flight request deduplication.
+ * @en Helper function to create a standardized HttpResponse object from lightweight data.
+ * @ru Вспомогательная функция для создания стандартизированного объекта HttpResponse из легких данных.
+ * @param data - The lightweight response data.
+ * @returns A full HttpResponse object.
+ */
+const createHttpResponse = (data: LightweightResponse): HttpResponse<any> => ({
+  status: data.status,
+  headers: data.headers,
+  body: data.body,
+  url: data.url,
+  clone: () => createHttpResponse(data),
+});
+
+/**
+ * @en Structure representing a pending in-flight request promise and its resolvers.
+ * @ru Структура, представляющая ожидающее выполнение обещание запроса и его разрешающие функции.
  */
 interface InFlightTrigger {
   promise: Promise<HttpResponse<any>>;
@@ -38,109 +94,76 @@ interface InFlightTrigger {
 }
 
 /**
- * @ru Фабрика плагина кэширования и дедупликации конкурентных запросов для HyperCore.
- * @en Cache management and concurrent request deduplication plugin factory for HyperCore.
- * @returns Модуль расширения ядра в рамках линейного жизненного цикла. / Configured extension plugin container.
+ * @en Creates a caching plugin for Hyperttp.
+ * Handles in-memory caching, conditional requests (ETag/Last-Modified), and request deduplication.
+ * @ru Создает плагин кэширования для Hyperttp.
+ * Обрабатывает кэширование в памяти, условные запросы (ETag/Last-Modified) и дедупликацию запросов.
+ * @returns The configured HyperPlugin instance.
  */
 export function withCache(): HyperPlugin {
-  /**
-   * @private
-   * @ru Изолированный инстанс менеджера кэша для текущего клиента.
-   * @en Isolated cache manager orchestration instance allocated for the target client.
-   */
-  let cache: CacheManager;
-
-  /**
-   * @private
-   * @ru Список HTTP-методов, для которых разрешено кэширование ответов.
-   * @en Set of HTTP request methods authorized for downstream response caching.
-   */
-  let allowedMethods: Set<string>;
-
-  /**
-   * @private
-   * @ru Карта активных сетевых запросов для предотвращения каскадного заваливания бэкенда (Cache Stampede).
-   * @en Registry of concurrent requests in execution to prevent backend server breakdown (Cache Stampede).
-   */
+  let cache!: CacheManager<LightweightResponse>;
+  let allowedMethods: Set<string> = new Set();
   const inFlight = new Map<string, InFlightTrigger>();
 
   return {
     name: "hyperttp-cache",
 
-    /**
-     * @ru Динамическая проверка необходимости активации кэширования на основе переданных опций.
-     * @en Dynamic check evaluating if the caching plugin layer should be appended based on client runtime options.
-     * @param config - Глобальная конфигурация инстанса клиента. / Global active client lifecycle options.
-     * @returns Индикатор необходимости сборки плагина. / Lifecycle activation indicator status.
-     */
-    enabled: (config: HttpClientOptions & { cache?: { enabled: boolean } }) => {
-      return !!config.cache?.enabled;
+    enabled: (config: HttpClientOptions): boolean => {
+      return !!(config as any).cache?.enabled;
     },
 
-    /**
-     * @ru Однократный хук инициализации. Настраивает менеджер кэша и внедряет методы отладки/очистки в ядро.
-     * @en One-time setup context hook. Orchestrates the cache manager and extends telemetry/purge interfaces inside the core.
-     * @param ctx - Общий контекст окружения плагина. / Shared plugin execution context metadata.
-     */
     setup(ctx: PluginContext) {
-      const { core, config } = ctx as { core: IHyperCore; config: any };
+      const core = ctx.core;
+      const config = ctx.config as any;
 
-      cache = new CacheManager(config?.cache);
+      cache = new CacheManager<LightweightResponse>(config?.cache);
       ctx.cache = cache;
 
       const methods = config?.cache?.methods ?? ["GET"];
       allowedMethods = new Set(methods.map((m: string) => m.toUpperCase()));
 
       if (core && typeof core.getStats === "function") {
-        const originalGetStats = core.getStats;
-        core.getStats = function (this: IHyperCore) {
-          const stats = originalGetStats.call(this);
-          if (stats) {
-            stats.cacheSize = cache.size;
-          }
-          return stats;
+        const originalGetStats = core.getStats.bind(core);
+        core.getStats = function () {
+          const stats = originalGetStats();
+          return {
+            ...stats,
+            cacheSize: cache.size,
+          };
         };
       }
 
       core.clearCache = (key?: string) => {
-        return key ? cache.delete(key) : cache.clear();
+        if (key) {
+          cache.delete(key);
+        } else {
+          cache.clear();
+        }
       };
     },
 
-    /**
-     * @ru Перехватчик фазы отправки запроса. Проверяет локальные кэш-хиты и координирует пулинг конкурентных задач.
-     * @en Request phase interceptor. Evaluates local cache hits, appends conditional headers, or hooks into active in-flight targets.
-     * @param req - Сконфигурированный внутренний объект запроса. / Contextual internal request parameters.
-     * @param ctx - Общий контекст окружения плагина. / Shared plugin execution context metadata.
-     * @returns Мгновенный изолированный ответ из кэша, обертку гонки или void для продолжения сетевого цикла. / Short-circuit response clone, matching follower promise tracker, or void execution.
-     */
-    onRequest(
-      req: InternalRequest,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      _ctx: PluginContext,
-    ): Promise<HttpResponse<any> | void> | HttpResponse<any> | void {
-      const method = req.method.toUpperCase();
-      if (!allowedMethods.has(method)) {
+    onRequest(req: InternalRequest) {
+      if (!allowedMethods.has(req.method.toUpperCase())) {
         return;
       }
 
       const cacheKey = req.url;
-      const cachedEntry = cache.getWithMetadata<HttpResponse<any>>(cacheKey);
 
-      if (
-        cachedEntry !== undefined &&
-        !cachedEntry.etag &&
-        !cachedEntry.lastModified
-      ) {
-        return cachedEntry.data.clone();
+      const cachedEntry = cache.getWithMetadata(cacheKey);
+
+      if (cachedEntry && !cachedEntry.etag && !cachedEntry.lastModified) {
+        return createHttpResponse(cachedEntry.data);
       }
 
-      // Частичный кэш-хит, подмешиваем заголовки проверки свежести
-      if (cachedEntry !== undefined) {
+      if (cachedEntry) {
         req.headers = { ...req.headers };
-        if (cachedEntry.etag) req.headers["if-none-match"] = cachedEntry.etag;
-        if (cachedEntry.lastModified)
+
+        if (cachedEntry.etag) {
+          req.headers["if-none-match"] = cachedEntry.etag;
+        }
+        if (cachedEntry.lastModified) {
           req.headers["if-modified-since"] = cachedEntry.lastModified;
+        }
       }
 
       const currentInFlight = inFlight.get(cacheKey);
@@ -149,86 +172,99 @@ export function withCache(): HyperPlugin {
       }
 
       let resolveFn!: (res: HttpResponse<any>) => void;
-      let rejectFn!: (err: any) => void;
+      let rejectFn!: (err: HyperttpError) => void;
 
-      const promise = new Promise<HttpResponse<any>>((res, rej) => {
-        resolveFn = res;
-        rejectFn = rej;
+      const promise = new Promise<HttpResponse<any>>((resolve, reject) => {
+        resolveFn = resolve;
+        rejectFn = reject;
       });
 
-      promise.catch(() => {});
+      const trigger: InFlightTrigger = {
+        promise,
+        resolve: resolveFn,
+        reject: (err) => {
+          inFlight.delete(cacheKey);
+          rejectFn(err);
+        },
+      };
 
-      inFlight.set(cacheKey, { promise, resolve: resolveFn, reject: rejectFn });
+      inFlight.set(cacheKey, trigger);
+
+      setTimeout(() => {
+        if (inFlight.has(cacheKey)) {
+          console.warn(
+            `[Cache] Warning: Request hung for ${cacheKey}, forcing cleanup`,
+          );
+
+          trigger.reject(
+            new Error("Request timed out in cache plugin") as HyperttpError,
+          );
+        }
+      }, 30_000);
+
+      return;
     },
 
-    /**
-     * @ru Перехватчик фазы получения ответа. Обновляет хранилище или трансформирует статус 304 в полные данные из кэша.
-     * @en Response phase interceptor. Saves raw outputs to the storage layer or re-hydrates empty 304 responses with cached data bodies.
-     */
-    onResponse(
-      res: HttpResponse<any>,
-      req: InternalRequest,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      _ctx: PluginContext,
-    ): void {
+    onResponse(res: HttpResponse<any>, req?: InternalRequest) {
+      if (!req) return;
+
       const cacheKey = req.url;
       const trigger = inFlight.get(cacheKey);
 
-      if (!trigger) {
-        return;
-      }
+      if (!trigger) return;
 
       inFlight.delete(cacheKey);
+      if (res.status === 304) {
+        const cachedEntry = cache.getWithMetadata(cacheKey);
 
-      const cachedEntry = cache.getWithMetadata<HttpResponse<any>>(cacheKey);
+        if (cachedEntry) {
+          const cachedData = cachedEntry.data;
+          const restoredRes: HttpResponse<any> = {
+            status: cachedData.status,
+            headers: cachedData.headers,
+            body: cachedData.body,
+            url: cachedData.url,
+            clone: () => createHttpResponse(cachedData),
+          };
 
-      if (res.status === 304 && cachedEntry !== undefined) {
-        const clonedCache = cachedEntry.data.clone();
-        Object.assign(res, clonedCache);
-        res.status = clonedCache.status ?? 200;
-
-        trigger.resolve(clonedCache);
-        return;
+          trigger.resolve(restoredRes);
+          return;
+        } else {
+          console.warn(
+            `[Cache] Received 304 for ${cacheKey} but no cache entry found.`,
+          );
+        }
       }
 
       if (res.status >= 200 && res.status < 300) {
-        const valueToCache = res.clone();
-        const headers = res.headers;
-        const etag = headers?.["etag"] || headers?.["ETag"];
-        const lastModified =
-          headers?.["last-modified"] || headers?.["Last-Modified"];
+        const headers = res.headers || {};
 
-        cache.setWithMetadata(cacheKey, valueToCache, {
-          etag: typeof etag === "string" ? etag : undefined,
-          lastModified:
-            typeof lastModified === "string" ? lastModified : undefined,
+        const lightResponse: LightweightResponse = {
+          body: res.body,
+          status: res.status,
+          headers: res.headers,
+          url: res.url as string,
+        };
+
+        cache.setWithMetadata(cacheKey, lightResponse, {
+          etag: Array.isArray(headers["etag"])
+            ? headers["etag"][0]
+            : (headers["etag"] as string),
+          lastModified: Array.isArray(headers["last-modified"])
+            ? headers["last-modified"][0]
+            : (headers["last-modified"] as string),
         });
-
-        trigger.resolve(res.clone());
-        return;
       }
 
       trigger.resolve(res.clone());
     },
 
-    /**
-     * @ru Перехватчик фазы критических сбоев. Разрывает пул ожидания дедупликации, транслируя ошибку всем подписчикам.
-     * @en Error phase interceptor. Purges matching metadata maps and forwards pipeline processing exceptions to all waiting threads.
-     * @param err - Специфичный объект ошибки сетевого клиента. / Normalized client-level error framework tracking details.
-     * @param req - Сконфигурированный внутренний объект запроса. / Contextual internal request parameters.
-     * @param ctx - Общий контекст окружения плагина. / Shared plugin execution context metadata.
-     */
-    onError(
-      err: HyperttpError,
-      req: InternalRequest,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      _ctx: PluginContext,
-    ): void {
-      const cacheKey = req.url;
-      const trigger = inFlight.get(cacheKey);
+    onError(err: HyperttpError, req?: InternalRequest) {
+      if (!req) return;
 
+      const trigger = inFlight.get(req.url);
       if (trigger) {
-        inFlight.delete(cacheKey);
+        inFlight.delete(req.url);
         trigger.reject(err);
       }
     },

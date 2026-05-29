@@ -17,12 +17,8 @@
     "type": "git",
     "url": "git+https://github.com/IT-IF-OR/hyperttp-cache.git"
   },
-  "dependencies": {
-    "@hyperttp/types": "^0.1.1",
-    "lru-cache": "^11.5.1"
-  },
   "peerDependencies": {
-    "@hyperttp/core": "^1.2.0"
+    "@hyperttp/types": "^0.1.5"
   },
   "devDependencies": {
     "@dirold2/dev-tools": "^1.0.16",

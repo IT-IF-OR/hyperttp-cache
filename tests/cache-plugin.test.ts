@@ -10,14 +10,11 @@ describe("Cache Plugin Full Test Suite", () => {
   let plugin: ReturnType<typeof withCache>;
   let ctx: any;
 
-  // Вспомогательная функция, полностью имитирующая конвейер выполнения HyperCore.dispatch
   function createMockRunner(networkTransportMock: () => Promise<any>) {
     return async (req: InternalRequest) => {
-      // 1. Фаза onRequest
       if (plugin.onRequest) {
         const shortCircuitResponse = await plugin.onRequest(req, ctx);
         if (shortCircuitResponse) {
-          // Если перехвачено (кэш-хит или промис дедупликации) — сразу идем в onResponse
           if (plugin.onResponse) {
             plugin.onResponse(shortCircuitResponse, req, ctx);
           }
@@ -25,17 +22,14 @@ describe("Cache Plugin Full Test Suite", () => {
         }
       }
 
-      // 2. Имитация ухода в сеть через транспорт
       try {
         const rawResponse = await networkTransportMock();
 
-        // 3. Фаза onResponse для успешного исхода
         if (plugin.onResponse) {
           plugin.onResponse(rawResponse, req, ctx);
         }
         return rawResponse;
       } catch (error) {
-        // 4. Фаза onError при сетевых сбоях
         if (plugin.onError) {
           plugin.onError(error as HyperttpError, req, ctx);
         }
@@ -44,7 +38,6 @@ describe("Cache Plugin Full Test Suite", () => {
     };
   }
 
-  // Фабрика для создания изолированных копий объектов ответов с поддержкой .clone()
   function createMockResponse(
     data: Partial<HttpResponse<any>>,
   ): HttpResponse<any> {
@@ -82,7 +75,6 @@ describe("Cache Plugin Full Test Suite", () => {
     plugin.setup?.(ctx);
 
     const transportMock = vi.fn().mockImplementation(async () => {
-      // Искусственная задержка сети для создания состояния конкурентности
       await new Promise((resolve) => setTimeout(resolve, 10));
       return createMockResponse({ body: "dedup-payload" });
     });
@@ -94,15 +86,12 @@ describe("Cache Plugin Full Test Suite", () => {
       headers: {},
     } as InternalRequest;
 
-    // Веерный запуск 50 одновременных запросов
     const results = await Promise.all(
       Array.from({ length: 50 }).map(() => dispatch(req)),
     );
 
-    // Сетевой транспорт должен быть вызван строго один раз
     expect(transportMock).toHaveBeenCalledTimes(1);
 
-    // Все 50 подписчиков должны получить корректный payload
     results.forEach((res) => {
       expect(res.body).toBe("dedup-payload");
     });
@@ -122,10 +111,8 @@ describe("Cache Plugin Full Test Suite", () => {
       headers: {},
     } as InternalRequest;
 
-    // Первый запрос — прогрев кэша (идет в сеть)
     await dispatch(req);
 
-    // Второй запрос — полный локальный кэш-хит (в сеть не идет)
     const secondResponse = await dispatch(req);
 
     expect(transportMock).toHaveBeenCalledTimes(1);
@@ -145,7 +132,6 @@ describe("Cache Plugin Full Test Suite", () => {
           body: "initial-heavy-data",
         });
       }
-      // При повторном запросе сервер возвращает пустой 304
       return createMockResponse({
         status: 304,
         headers: { etag: "v1" },
@@ -160,15 +146,12 @@ describe("Cache Plugin Full Test Suite", () => {
       headers: {},
     } as InternalRequest;
 
-    // 1. Базовый запрос для записи ETag в кэш
     await dispatch(req);
 
-    // 2. Повторный запрос — плагин обязан подмешать условный заголовок
     const secondResponse = await dispatch(req);
 
     expect(transportMock).toHaveBeenCalledTimes(2);
     expect(req.headers["if-none-match"]).toBe("v1");
-    // Плагин должен гидрировать пустой 304-ответ данными из памяти
     expect(secondResponse.status).toBe(200);
     expect(secondResponse.body).toBe("initial-heavy-data");
   });
@@ -187,18 +170,16 @@ describe("Cache Plugin Full Test Suite", () => {
       headers: {},
     } as InternalRequest;
 
-    // Первая попытка падает из-за сети
     await expect(dispatch(req)).rejects.toThrow("Network connection breakdown");
 
-    // Вторая попытка должна снова пойти в сеть, так как onError обязан очистить in-flight пулы
     await expect(dispatch(req)).rejects.toThrow("Network connection breakdown");
     expect(transportMock).toHaveBeenCalledTimes(2);
   });
 
   it("should correctly evaluate plugin activation via enabled method", () => {
-    expect(plugin.enabled({ cache: { enabled: true } })).toBe(true);
-    expect(plugin.enabled({ cache: { enabled: false } })).toBe(false);
-    expect(plugin.enabled({})).toBe(false);
+    expect(plugin.enabled!({ cache: { enabled: true } })).toBe(true);
+    expect(plugin.enabled!({ cache: { enabled: false } })).toBe(false);
+    expect(plugin.enabled!({})).toBe(false);
   });
 
   it("should extend core with stats tracking and cache clearing capabilities", () => {
@@ -210,13 +191,11 @@ describe("Cache Plugin Full Test Suite", () => {
 
     plugin.setup?.(ctx);
 
-    // Проверяем работу getStats() и подмешивание cacheSize
     const stats = ctx.core.getStats();
     expect(originalStatsCalled).toBe(true);
     expect(stats?.nativeMetric).toBe(100);
     expect(stats?.cacheSize).toBe(0);
 
-    // Проверяем вызовы очистки кэша
     const clearSpy = vi.spyOn(ctx.cache, "clear");
     const deleteSpy = vi.spyOn(ctx.cache, "delete");
 
@@ -234,7 +213,7 @@ describe("Cache Plugin Full Test Suite", () => {
 
     const req = {
       url: "/api/submit",
-      method: "POST", // POST не входит в разрешенные по умолчанию ["GET"]
+      method: "POST",
       headers: {},
     } as InternalRequest;
 
@@ -265,8 +244,8 @@ describe("Cache Plugin Full Test Suite", () => {
       headers: {},
     } as InternalRequest;
 
-    await dispatch(req); // Пишем в кэш с метаданными Last-Modified
-    const secondResponse = await dispatch(req); // Идем на ревалидацию
+    await dispatch(req);
+    const secondResponse = await dispatch(req);
 
     expect(transportMock).toHaveBeenCalledTimes(2);
     expect(req.headers["if-modified-since"]).toBe(

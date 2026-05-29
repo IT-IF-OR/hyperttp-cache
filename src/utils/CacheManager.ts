@@ -1,123 +1,185 @@
-import { LRUCache } from "lru-cache";
 import type { CacheEntry, CacheManagerOptions } from "../types/cache.ts";
 
 /**
- * @class CacheManager
- * @en High-performance in-memory cache based on LRU strategy.
- * Provides TTL support, metadata storage (etag, lastModified) and fast key-value access.
- *
- * @ru Высокопроизводительный in-memory кэш на основе LRU стратегии.
- * Поддерживает TTL, хранение метаданных (etag, lastModified) и быстрый доступ по ключу.
+ * @en Internal structure for a cached item including metadata and expiration.
+ * @ru Внутренняя структура элемента кэша, включающая метаданные и срок действия.
+ * @template T - Type of the cached data.
  */
-export class CacheManager {
-  private readonly cache: LRUCache<string, CacheEntry<any>>;
+interface InternalCacheEntry<T> {
+  data: T;
+  etag?: string;
+  lastModified?: string;
+  expiresAt: number;
+}
+
+/**
+ * @en High-performance inline in-memory cache with no external dependencies.
+ * Uses native Map and lazy invalidation to ensure maximum RPS.
+ * @ru Высокопроизводительный инлайновый in-memory кэш без внешних зависимостей.
+ * Использует нативный Map и ленивую инвалидацию для обеспечения максимального RPS.
+ *
+ * @template T - Type of the data stored in the cache. Defaults to unknown.
+ */
+export class CacheManager<T = unknown> {
+  private readonly storage = new Map<string, InternalCacheEntry<T>>();
+  private readonly maxSize: number;
+  private readonly ttl: number;
+  private readonly updateAgeOnGet: boolean;
 
   constructor(options?: CacheManagerOptions) {
-    this.cache = new LRUCache({
-      max: options?.maxSize ?? 500,
-      ttl: options?.ttl ?? 300_000,
-      updateAgeOnGet: true,
-    });
+    this.maxSize = options?.maxSize ?? 500;
+    this.ttl = options?.ttl ?? 300_000;
+    this.updateAgeOnGet = options?.updateAgeOnGet ?? true;
   }
 
   /**
-   * @en Retrieves cached value by key.
+   * @en Retrieves a value from the cache by key.
    * @ru Получает значение из кэша по ключу.
-   *
-   * @template T
-   * @param key Cache key
-   * @returns Cached value or undefined if not found
+   * @param key - The cache key.
+   * @returns The cached value or undefined if not found or expired.
    */
-  get<T>(key: string): T | undefined {
-    return this.cache.get(key)?.data;
+  get(key: string): T | undefined {
+    const entry = this.storage.get(key);
+    if (!entry) return undefined;
+
+    const now = Date.now();
+    if (now > entry.expiresAt) {
+      this.storage.delete(key);
+      return undefined;
+    }
+
+    if (this.updateAgeOnGet) {
+      entry.expiresAt = now + this.ttl;
+      // Move to end for LRU
+      this.storage.delete(key);
+      this.storage.set(key, entry);
+    }
+
+    return entry.data;
   }
 
   /**
-   * @en Stores value in cache.
+   * @en Stores a value in the cache.
    * @ru Сохраняет значение в кэш.
-   *
-   * @template T
-   * @param key Cache key
-   * @param value Value to store
+   * @param key - The cache key.
+   * @param value - The data to store.
    */
-  set<T>(key: string, value: T): void {
-    this.cache.set(key, {
+  set(key: string, value: T): void {
+    const now = Date.now();
+
+    if (this.storage.has(key)) {
+      this.storage.delete(key);
+    } else if (this.storage.size >= this.maxSize) {
+      const oldestKey = this.storage.keys().next().value;
+      if (oldestKey !== undefined) this.storage.delete(oldestKey);
+    }
+
+    this.storage.set(key, {
       data: value,
+      expiresAt: now + this.ttl,
     });
   }
 
   /**
-   * @en Retrieves cached entry with metadata (etag, lastModified).
+   * @en Retrieves a cache entry along with its metadata (etag, lastModified).
    * @ru Получает запись кэша вместе с метаданными (etag, lastModified).
-   *
-   * @template T
-   * @param key Cache key
-   * @returns Cached entry with metadata or undefined
+   * @param key - The cache key.
+   * @returns The cache entry with metadata or undefined if not found or expired.
    */
-  getWithMetadata<T>(key: string): CacheEntry<T> | undefined {
-    const entry = this.cache.get(key);
-    return entry ? (entry as CacheEntry<T>) : undefined;
+  getWithMetadata(key: string): CacheEntry<T> | undefined {
+    const entry = this.storage.get(key);
+    if (!entry) return undefined;
+
+    const now = Date.now();
+    if (now > entry.expiresAt) {
+      this.storage.delete(key);
+      return undefined;
+    }
+
+    if (this.updateAgeOnGet) {
+      entry.expiresAt = now + this.ttl;
+      this.storage.delete(key);
+      this.storage.set(key, entry);
+    }
+
+    return {
+      data: entry.data,
+      etag: entry.etag,
+      lastModified: entry.lastModified,
+    };
   }
 
   /**
-   * @en Stores value with optional HTTP metadata (etag, lastModified).
-   * @ru Сохраняет значение с дополнительными HTTP метаданными (etag, lastModified).
-   *
-   * @template T
-   * @param key Cache key
-   * @param data Value to store
-   * @param meta Optional HTTP metadata
+   * @en Stores a value with additional HTTP metadata.
+   * @ru Сохраняет значение с дополнительными HTTP метаданными.
+   * @param key - The cache key.
+   * @param data - The response data to store.
+   * @param meta - Optional HTTP metadata (etag, lastModified).
    */
-  setWithMetadata<T>(
+  setWithMetadata(
     key: string,
     data: T,
-    meta?: {
-      etag?: string;
-      lastModified?: string;
-    },
+    meta?: { etag?: string; lastModified?: string },
   ): void {
-    this.cache.set(key, {
+    const now = Date.now();
+
+    if (this.storage.has(key)) {
+      this.storage.delete(key);
+    } else if (this.storage.size >= this.maxSize) {
+      const oldestKey = this.storage.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.storage.delete(oldestKey);
+      }
+    }
+
+    this.storage.set(key, {
       data,
       etag: meta?.etag,
       lastModified: meta?.lastModified,
+      expiresAt: now + this.ttl,
     });
   }
 
   /**
-   * @en Checks if key exists in cache.
-   * @ru Проверяет наличие ключа в кэше.
-   *
-   * @param key Cache key
-   * @returns true if exists, otherwise false
+   * @en Checks for the existence of a key in the cache without updating its TTL.
+   * @ru Проверяет наличие ключа в кэше без обновления его времени жизни.
+   * @param key - The cache key.
+   * @returns True if the key exists and is not expired.
    */
   has(key: string): boolean {
-    return this.cache.has(key);
+    const entry = this.storage.get(key);
+    if (!entry) return false;
+
+    if (Date.now() > entry.expiresAt) {
+      this.storage.delete(key);
+      return false;
+    }
+    return true;
   }
 
   /**
-   * @en Deletes value from cache by key.
+   * @en Removes a value from the cache by key.
    * @ru Удаляет значение из кэша по ключу.
-   *
-   * @param key Cache key
-   * @returns true if value was removed
+   * @param key - The cache key.
+   * @returns True if the element was removed, false otherwise.
    */
   delete(key: string): boolean {
-    return this.cache.delete(key);
+    return this.storage.delete(key);
   }
 
   /**
-   * @en Clears entire cache.
+   * @en Clears the entire cache.
    * @ru Очищает весь кэш.
    */
   clear(): void {
-    this.cache.clear();
+    this.storage.clear();
   }
 
   /**
-   * @en Returns current cache size.
+   * @en Returns the current number of items in the cache.
    * @ru Возвращает текущий размер кэша.
    */
   get size(): number {
-    return this.cache.size;
+    return this.storage.size;
   }
 }

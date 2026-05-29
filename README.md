@@ -1,4 +1,3 @@
-```markdown
 # hyperttp-cache
 
 > [Русский](https://github.com/IT-IF-OR/hyperttp-cache/tree/main/lang/ru) | English
@@ -136,7 +135,3 @@ from the map to ensure subsequent retries targeting the failed endpoint are neve
 ## 📄 License
 
 MIT
-
-```
-
-```
