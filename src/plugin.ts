@@ -1,12 +1,7 @@
-import { CacheManagerOptions, LightweightResponse } from "./types/cache.js";
-import { CacheManager } from "./utils/CacheManager.js";
+import type { CacheManagerOptions, LightweightResponse } from "./types/cache.js";
+import { CacheManager } from "hcacher";
 import { createHttpResponse } from "./utils/createHttpResponse.js";
-import type {
-  InternalRequest,
-  HttpResponse,
-  HyperPlugin,
-  HyperttpError,
-} from "@hyperttp/types";
+import type { InternalRequest, HttpResponse, HyperPlugin, HyperttpError } from "@hyperttp/types";
 
 /**
  * @en Extends the PluginContext to include the cache manager instance.
@@ -73,9 +68,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
   let cache: CacheManager<LightweightResponse<unknown>>;
 
   const allowedMethods = new Set<string>(
-    options?.methods
-      ? options.methods.map((m) => m.toUpperCase())
-      : ["GET", "HEAD"],
+    options?.methods ? options.methods.map((m) => m.toUpperCase()) : ["GET", "HEAD"],
   );
 
   const inFlight = new Map<string, InFlightTrigger>();
@@ -87,7 +80,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
       cache = new CacheManager<LightweightResponse<unknown>>({
         maxSize: options?.maxSize ?? 1000,
         ttl: options?.ttl ?? 300_000,
-        updateAgeOnGet: options?.updateAgeOnGet ?? true,
+        touchOnGet: options?.touchOnGet ?? true,
       });
     },
 
@@ -95,7 +88,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
       if (!allowedMethods.has(req.method.toUpperCase())) return;
 
       const cacheKey = req.url;
-      const cachedEntry = cache.getWithMetadata(cacheKey);
+      const cachedEntry = cache.getEntry(cacheKey);
 
       if (cachedEntry && !cachedEntry.etag && !cachedEntry.lastModified) {
         return createHttpResponse(cachedEntry.data);
@@ -125,14 +118,11 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
       const trigger = inFlight.get(cacheKey);
 
       if (res.status === 304) {
-        if (
-          res.body &&
-          typeof (res.body as Record<string, unknown>).cancel === "function"
-        ) {
+        if (res.body && typeof (res.body as Record<string, unknown>).cancel === "function") {
           (res.body as ReadableStream).cancel().catch(() => {});
         }
 
-        const cachedEntry = cache.getWithMetadata(cacheKey);
+        const cachedEntry = cache.getEntry(cacheKey);
         if (cachedEntry) {
           const restoredRes = createHttpResponse(cachedEntry.data);
 
@@ -147,9 +137,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
           return;
         }
 
-        const err = new Error(
-          "304 status received, but cache entry is missing",
-        );
+        const err = new Error("304 status received, but cache entry is missing");
         if (trigger) {
           inFlight.delete(cacheKey);
           trigger.listeners.forEach((l) => l.reject(err));
@@ -160,7 +148,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
       if (res.status >= 200 && res.status < 300) {
         const cleanHeaders = { ...res.headers } as Record<string, string>;
 
-        cache.setWithMetadata(
+        cache.set(
           cacheKey,
           {
             body: res.body,
@@ -170,8 +158,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
           },
           {
             etag: cleanHeaders["etag"] ?? cleanHeaders["ETag"],
-            lastModified:
-              cleanHeaders["last-modified"] ?? cleanHeaders["Last-Modified"],
+            lastModified: cleanHeaders["last-modified"] ?? cleanHeaders["Last-Modified"],
           },
         );
       }

@@ -1,5 +1,5 @@
 import type { HttpResponse } from "@hyperttp/types";
-import { LightweightResponse } from "../types/cache.js";
+import type { LightweightResponse } from "../types/cache.js";
 
 /**
  * @en Reconstructs a full HttpResponse object from a lightweight cache response.
@@ -18,9 +18,7 @@ import { LightweightResponse } from "../types/cache.js";
  * const response = createHttpResponse(cached);
  * const data = await response.json(); // { id: 1, name: 'John' }
  */
-export function createHttpResponse(
-  snapshot: LightweightResponse<unknown>,
-): HttpResponse<unknown> {
+export function createHttpResponse(snapshot: LightweightResponse<unknown>): HttpResponse<unknown> {
   return {
     status: snapshot.status,
     headers: { ...snapshot.headers },
