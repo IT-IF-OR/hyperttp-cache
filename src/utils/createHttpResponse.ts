@@ -1,66 +1,50 @@
-import type { HttpResponse } from "@hyperttp/types";
+import type { UniversalResponse } from "@hyperttp/types";
 import type { LightweightResponse } from "../types/cache.js";
 
+function cloneValue<T>(value: T): T {
+  if (value && typeof value === "object" && !(value instanceof ReadableStream)) {
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
 /**
- * @en Reconstructs a full HttpResponse object from a lightweight cache response.
- * @ru Реконструирует полный объект HttpResponse из легковесного ответа кэша.
- *
- * @param snapshot - Lightweight response object containing cached data.
- * @returns A fully compatible HttpResponse object with methods like .text(), .json(), and .clone().
- *
- * @example
- * const cached = {
- *   status: 200,
- *   headers: { 'content-type': 'application/json' },
- *   url: 'https://api.example.com/data',
- *   body: { id: 1, name: 'John' }
- * };
- * const response = createHttpResponse(cached);
- * const data = await response.json(); // { id: 1, name: 'John' }
+ * @en Creates a cacheable snapshot of a universal response.
+ * @ru Создаёт пригодный для кэширования снимок универсального ответа.
  */
-export function createHttpResponse(snapshot: LightweightResponse<unknown>): HttpResponse<unknown> {
+export function createResponseSnapshot<T>(response: UniversalResponse<T>): LightweightResponse<T> {
   return {
+    protocol: response.protocol,
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    headers: { ...response.headers },
+    url: response.url,
+    data: cloneValue(response.data),
+    metadata: response.metadata ? cloneValue({ ...response.metadata }) : undefined,
+  };
+}
+
+/**
+ * @en Reconstructs a universal response from a cached snapshot.
+ * @ru Восстанавливает универсальный ответ из снимка кэша.
+ */
+export function createHttpResponse<T = unknown>(
+  snapshot: LightweightResponse<T>,
+): UniversalResponse<T> {
+  return {
+    protocol: snapshot.protocol,
+    ok: snapshot.ok,
     status: snapshot.status,
+    statusText: snapshot.statusText,
     headers: { ...snapshot.headers },
     url: snapshot.url,
-    body: snapshot.body,
-
-    text() {
-      if (typeof snapshot.body === "string") {
-        return Promise.resolve(snapshot.body);
-      }
-      try {
-        return Promise.resolve(JSON.stringify(snapshot.body));
-      } catch {
-        return Promise.resolve("");
-      }
-    },
-
-    json<R = unknown>() {
-      return Promise.resolve(snapshot.body as R);
-    },
-
-    dump() {
-      return Promise.resolve();
-    },
-
-    clone(): HttpResponse<unknown> {
-      let clonedBody = snapshot.body;
-
-      if (snapshot.body && typeof snapshot.body === "object") {
-        if (!(snapshot.body instanceof ReadableStream)) {
-          try {
-            clonedBody = structuredClone(snapshot.body);
-          } catch {
-            clonedBody = JSON.parse(JSON.stringify(snapshot.body));
-          }
-        }
-      }
-
-      return createHttpResponse({
-        ...snapshot,
-        body: clonedBody,
-      });
-    },
+    data: cloneValue(snapshot.data),
+    metadata: snapshot.metadata ? cloneValue({ ...snapshot.metadata }) : undefined,
   };
 }

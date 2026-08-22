@@ -1,46 +1,32 @@
-import type { Method } from "@hyperttp/types";
+import type { RequestContext, SendRequest, UniversalResponse } from "@hyperttp/types";
 import type { CacheManagerOptions as HcacherOptions } from "hcacher";
 
 export type { CacheEntry } from "hcacher";
 
-/**
- * @en Configuration options for the CacheManager.
- * @ru Конфигурационные опции для CacheManager.
- */
+/** Configuration options for the cache manager. */
 export interface CacheManagerOptions extends HcacherOptions {
-  /**
-   * @en HTTP methods allowed to be cached.
-   * @ru HTTP методы, которые можно кэшировать.
-   */
-  methods?: readonly Method[];
+  /** Returns a cache key for a request. Return undefined to bypass caching. */
+  key?: (request: SendRequest, context?: RequestContext) => string | undefined;
+
+  /** By default, only REST GET and HEAD requests use the cache. */
+  shouldCache?: (request: SendRequest, context?: RequestContext) => boolean;
+
+  /** By default, only successful responses are stored. */
+  shouldStoreResponse?: (
+    response: UniversalResponse,
+    request: SendRequest,
+    context?: RequestContext,
+  ) => boolean;
 }
 
-/**
- * @en A simplified response object used for efficient cache storage.
- * @ru Упрощенный объект ответа, используемый для эффективного хранения в кэше.
- */
+/** A serializable snapshot of a protocol-neutral response. */
 export interface LightweightResponse<T = unknown> {
-  /**
-   * @en The response body content.
-   * @ru Содержимое тела ответа.
-   */
-  body: T;
-
-  /**
-   * @en The HTTP status code.
-   * @ru HTTP-код статуса.
-   */
+  protocol: string;
+  ok: boolean;
   status: number;
-
-  /**
-   * @en The response headers.
-   * @ru Заголовки ответа.
-   */
+  statusText?: string;
   headers: Record<string, string | string[]>;
-
-  /**
-   * @en The final URL of the response.
-   * @ru Финальный URL ответа.
-   */
-  url: string;
+  url?: string;
+  data: T;
+  metadata?: Record<string, unknown>;
 }

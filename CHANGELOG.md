@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.0] - 2026-08-22
+
+### Changed
+
+- **Breaking:** Migrated the cache plugin to the Core v2 universal request/response envelope.
+- **Breaking:** Updated the `@hyperttp/types` peer dependency to `^0.3.0`.
+- Cache request and response hooks now operate on protocol-neutral `SendRequest`, `UniversalResponse`, and `RequestContext` values.
+- Preserved cache behavior while moving request data to protocol-specific `input` and response payloads to `data`.
+
 ## [1.2.0] - 2026-07-19
 
 ### Added

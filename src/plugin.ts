@@ -1,63 +1,40 @@
 import type { CacheManagerOptions, LightweightResponse } from "./types/cache.js";
 import { CacheManager } from "hcacher";
-import { createHttpResponse } from "./utils/createHttpResponse.js";
-import type { InternalRequest, HttpResponse, HyperPlugin, HyperttpError } from "@hyperttp/types";
+import { createHttpResponse, createResponseSnapshot } from "./utils/createHttpResponse.js";
+import type { HyperPlugin, RequestContext, SendRequest, UniversalResponse } from "@hyperttp/types";
 
-/**
- * @en Extends the PluginContext to include the cache manager instance.
- * @ru Расширяет PluginContext, добавляя экземпляр менеджера кэша.
- */
 declare module "@hyperttp/types" {
-  interface PluginContext {
-    /**
-     * @en The active cache manager instance.
-     * @ru Активный экземпляр менеджера кэша.
-     */
-    cache?: CacheManager<LightweightResponse>;
-  }
-  /**
-   * @en Extends HyperttpPluginsExtension to include cache configuration options.
-   * @ru Расширяет HyperttpPluginsExtension, добавляя опции конфигурации кэша.
-   */
-  interface HyperttpPluginsExtension {
-    /**
-     * @en Cache configuration and enablement flags.
-     * @ru Конфигурация кэша и флаги включения.
-     */
-    cache?: CacheManagerOptions & {
-      /**
-       * @en Enables or disables the caching plugin.
-       * @ru Включает или отключает плагин кэширования.
-       */
-      enabled: boolean;
-      /**
-       * @en List of HTTP methods allowed for caching (e.g., ["GET"]).
-       * @ru Список HTTP-методов, разрешенных для кэширования (например, ["GET"]).
-       */
-      methods?: string[];
-    };
-  }
-
-  /**
-   * @en Extends IHyperCore with cache management methods.
-   * @ru Расширяет IHyperCore методами управления кэшем.
-   */
-  interface IHyperCore {
-    /**
-     * @en Clears the cache. If a key is provided, only that entry is removed.
-     * @ru Очищает кэш. Если указан ключ, удаляется только соответствующая запись.
-     * @param key - Optional cache key to delete.
-     */
-    clearCache(key?: string): void;
+  interface HyperClientOptions {
+    cache?: CacheManagerOptions;
   }
 }
 
 interface InFlightTrigger {
   listeners: {
-    resolve: (r: HttpResponse<unknown>) => void;
-    reject: (e: unknown) => void;
+    resolve: (response: UniversalResponse<unknown>) => void;
+    reject: (error: unknown) => void;
   }[];
-  timestamp: number;
+}
+
+function defaultCacheKey(request: SendRequest): string | undefined {
+  try {
+    return `${request.protocol}:${JSON.stringify({ input: request.input, metadata: request.metadata })}`;
+  } catch {
+    return;
+  }
+}
+
+function defaultShouldCache(request: SendRequest): boolean {
+  if (request.protocol !== "rest" || !request.input || typeof request.input !== "object") {
+    return false;
+  }
+
+  const { method } = request.input as { method?: unknown };
+  return typeof method === "string" && ["GET", "HEAD"].includes(method.toUpperCase());
+}
+
+function defaultShouldStoreResponse(response: UniversalResponse): boolean {
+  return response.ok;
 }
 
 export function withCache(options?: CacheManagerOptions): HyperPlugin {
@@ -66,12 +43,32 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
   }
 
   let cache: CacheManager<LightweightResponse<unknown>>;
-
-  const allowedMethods = new Set<string>(
-    options?.methods ? options.methods.map((m) => m.toUpperCase()) : ["GET", "HEAD"],
-  );
-
+  const cacheKey = options?.key ?? defaultCacheKey;
+  const shouldCache = options?.shouldCache ?? defaultShouldCache;
+  const shouldStoreResponse = options?.shouldStoreResponse ?? defaultShouldStoreResponse;
   const inFlight = new Map<string, InFlightTrigger>();
+  const requestKeys = new WeakMap<RequestContext, string>();
+
+  function getRequestKey(request: SendRequest, context?: RequestContext): string | undefined {
+    if (context) {
+      const savedKey = requestKeys.get(context);
+      if (savedKey) return savedKey;
+    }
+
+    const key = cacheKey(request, context);
+    if (key && context) requestKeys.set(context, key);
+    return key;
+  }
+
+  function takeRequestKey(request: SendRequest, context?: RequestContext): string | undefined {
+    if (context) {
+      const key = requestKeys.get(context);
+      requestKeys.delete(context);
+      return key;
+    }
+
+    return cacheKey(request, context);
+  }
 
   return {
     name: "hyperttp-cache",
@@ -84,100 +81,62 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
       });
     },
 
-    onRequest(req: InternalRequest) {
-      if (!allowedMethods.has(req.method.toUpperCase())) return;
+    onRequest(request, _, context) {
+      if (!shouldCache(request, context)) return;
 
-      const cacheKey = req.url;
-      const cachedEntry = cache.getEntry(cacheKey);
+      const key = getRequestKey(request, context);
+      if (!key) return;
 
-      if (cachedEntry && !cachedEntry.etag && !cachedEntry.lastModified) {
+      const cachedEntry = cache.getEntry(key);
+      if (cachedEntry) {
+        if (context) requestKeys.delete(context);
         return createHttpResponse(cachedEntry.data);
       }
 
-      if (cachedEntry) {
-        req.headers = { ...req.headers };
-        if (cachedEntry.etag) req.headers["if-none-match"] = cachedEntry.etag;
-        if (cachedEntry.lastModified) {
-          req.headers["if-modified-since"] = cachedEntry.lastModified;
-        }
-      }
-
-      const currentInFlight = inFlight.get(cacheKey);
+      const currentInFlight = inFlight.get(key);
       if (currentInFlight) {
-        return new Promise<HttpResponse<unknown>>((resolve, reject) => {
+        return new Promise<UniversalResponse<unknown>>((resolve, reject) => {
           currentInFlight.listeners.push({ resolve, reject });
         });
       }
 
-      inFlight.set(cacheKey, { listeners: [], timestamp: Date.now() });
+      inFlight.set(key, { listeners: [] });
     },
 
-    onResponse(res: HttpResponse<unknown>, req?: InternalRequest): void {
-      if (!req) return;
-      const cacheKey = req.url;
-      const trigger = inFlight.get(cacheKey);
+    onResponse(response, request, _, context) {
+      if (!request) return;
 
-      if (res.status === 304) {
-        if (res.body && typeof (res.body as Record<string, unknown>).cancel === "function") {
-          (res.body as ReadableStream).cancel().catch(() => {});
-        }
+      const key = context
+        ? takeRequestKey(request, context)
+        : shouldCache(request, context)
+          ? takeRequestKey(request, context)
+          : undefined;
+      if (!key) return;
 
-        const cachedEntry = cache.getEntry(cacheKey);
-        if (cachedEntry) {
-          const restoredRes = createHttpResponse(cachedEntry.data);
-
-          res.status = restoredRes.status;
-          res.headers = restoredRes.headers;
-          res.body = restoredRes.body;
-
-          if (trigger) {
-            inFlight.delete(cacheKey);
-            trigger.listeners.forEach((l) => l.resolve(restoredRes.clone()));
-          }
-          return;
-        }
-
-        const err = new Error("304 status received, but cache entry is missing");
-        if (trigger) {
-          inFlight.delete(cacheKey);
-          trigger.listeners.forEach((l) => l.reject(err));
-        }
-        throw err;
+      const trigger = inFlight.get(key);
+      const snapshot = createResponseSnapshot(response);
+      if (shouldStoreResponse(response, request, context)) {
+        cache.set(key, snapshot);
       }
 
-      if (res.status >= 200 && res.status < 300) {
-        const cleanHeaders = { ...res.headers } as Record<string, string>;
-
-        cache.set(
-          cacheKey,
-          {
-            body: res.body,
-            status: res.status,
-            headers: cleanHeaders,
-            url: res.url ?? "",
-          },
-          {
-            etag: cleanHeaders["etag"] ?? cleanHeaders["ETag"],
-            lastModified: cleanHeaders["last-modified"] ?? cleanHeaders["Last-Modified"],
-          },
-        );
-      }
-
-      if (trigger) {
-        inFlight.delete(cacheKey);
-        if (trigger.listeners.length > 0) {
-          const clonedForDependents = res.clone();
-          trigger.listeners.forEach((l) => l.resolve(clonedForDependents));
-        }
-      }
+      inFlight.delete(key);
+      trigger?.listeners.forEach((listener) => listener.resolve(createHttpResponse(snapshot)));
     },
 
-    onError(err: HyperttpError, req?: InternalRequest): void {
-      if (!req) return;
-      const trigger = inFlight.get(req.url);
+    onError(error, request, _, context) {
+      if (!request) return;
+
+      const key = context
+        ? takeRequestKey(request, context)
+        : shouldCache(request, context)
+          ? takeRequestKey(request, context)
+          : undefined;
+      if (!key) return;
+
+      const trigger = inFlight.get(key);
       if (trigger) {
-        inFlight.delete(req.url);
-        trigger.listeners.forEach((l) => l.reject(err));
+        inFlight.delete(key);
+        trigger.listeners.forEach((listener) => listener.reject(error));
       }
     },
   };
