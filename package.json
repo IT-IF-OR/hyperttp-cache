@@ -44,7 +44,7 @@
     "build": "tsc && esbuild 'dist/**/*.js' --outdir=dist --allow-overwrite --minify --sourcemap && d-build",
     "dist": "d-dist",
     "deploy": "npm run build && npm run dist",
-    "publish": "d-publish",
+    "pub": "d-publish",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
     "lint:fix": "oxlint src --fix",
