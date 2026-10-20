@@ -112,6 +112,38 @@ describe("withCache", () => {
     expect(await noStore.onRequest?.(req, pluginContext, context("second"))).toBeUndefined();
   });
 
+  it("partitions default REST cache entries by the auth identity", async () => {
+    const plugin = withCache();
+    plugin.setup?.(pluginContext);
+    const req: SendRequest = { protocol: "rest", input: { method: "GET", url: "/me" } };
+    const firstContext = context("first");
+    const secondContext = context("second");
+    firstContext.state["@hyperttp/auth.identity"] = "user:one";
+    secondContext.state["@hyperttp/auth.identity"] = "user:two";
+
+    await plugin.onRequest?.(req, pluginContext, firstContext);
+    plugin.onResponse?.(
+      { ...response({ user: "one" }), protocol: "rest" },
+      req,
+      pluginContext,
+      firstContext,
+    );
+
+    expect(await plugin.onRequest?.(req, pluginContext, secondContext)).toBeUndefined();
+    plugin.onResponse?.(
+      { ...response({ user: "two" }), protocol: "rest" },
+      req,
+      pluginContext,
+      secondContext,
+    );
+
+    const hitContext = context("hit");
+    hitContext.state["@hyperttp/auth.identity"] = "user:one";
+    expect(await plugin.onRequest?.(req, pluginContext, hitContext)).toMatchObject({
+      data: { user: "one" },
+    });
+  });
+
   it("preserves REST GET/HEAD success defaults and bypasses POST/error responses", async () => {
     const plugin = withCache();
     plugin.setup?.(pluginContext);

@@ -16,9 +16,15 @@ interface InFlightTrigger {
   }[];
 }
 
-function defaultCacheKey(request: SendRequest): string | undefined {
+const AUTH_IDENTITY_STATE_KEY = "@hyperttp/auth.identity";
+
+function defaultCacheKey(request: SendRequest, context?: RequestContext): string | undefined {
   try {
-    return `${request.protocol}:${JSON.stringify({ input: request.input, metadata: request.metadata })}`;
+    return `${request.protocol}:${JSON.stringify({
+      input: request.input,
+      metadata: request.metadata,
+      authIdentity: context?.state[AUTH_IDENTITY_STATE_KEY],
+    })}`;
   } catch {
     return;
   }
