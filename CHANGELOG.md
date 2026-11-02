@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.5] - 2026-11-02
+
+### Tests
+
+- Added explicit checks that concurrent requests with the same authentication identity are deduplicated across token rotation without including tokens in cache keys.
+- Added checks that concurrent requests with different authentication identities remain isolated even when credentials match.
+- Covered custom-key cache and deduplication bypass when the authentication identity is missing, empty, or invalid.
+
+### Documentation
+
+- Highlighted migration from `2.0.3`: authenticated caching and in-flight deduplication require an explicit credential-free key with a non-secret identity.
+- Clarified that auth identity is only published when `getCacheKey()` is configured and returns a value; query credentials and arbitrary auth headers require explicit safe-key or bypass configuration.
+
 ## [2.0.4] - 2026-11-02
 
 ### Fixed

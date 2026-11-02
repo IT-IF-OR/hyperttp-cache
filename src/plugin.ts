@@ -21,7 +21,11 @@ const AUTH_IDENTITY_STATE_KEY = "@hyperttp/auth.identity";
 function defaultCacheKey(request: SendRequest, context?: RequestContext): string | undefined {
   // Auth adapters may put credentials anywhere in the input. Require an explicit
   // credential-free key rather than trying to redact an unknown request shape.
-  if (context?.state[AUTH_IDENTITY_STATE_KEY] !== undefined) return;
+  if (
+    context?.state[AUTH_IDENTITY_STATE_KEY] !== undefined ||
+    context?.state["@hyperttp/auth.applied"] === true
+  )
+    return;
 
   try {
     if (request.input && typeof request.input === "object") {
@@ -106,6 +110,12 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
     },
 
     onRequest(request, _, context) {
+      const identity = context?.state[AUTH_IDENTITY_STATE_KEY];
+      if (
+        context?.state["@hyperttp/auth.applied"] === true &&
+        (typeof identity !== "string" || !identity)
+      )
+        return;
       if (!shouldCache(request, context)) return;
 
       const key = getRequestKey(request, context);

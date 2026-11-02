@@ -50,6 +50,33 @@ function authenticatedKey(req: SendRequest, ctx?: RequestContext): string | unde
 const pluginContext = { config: {}, core: {} } as PluginContext;
 
 describe("withCache", () => {
+  it("does not call a custom cache key for auth without identity", async () => {
+    const key = vi.fn(() => "unsafe-shared-key");
+    const plugin = withCache({ key });
+    plugin.setup?.(pluginContext);
+    const ctx = context("anonymous-auth");
+    ctx.state["@hyperttp/auth.applied"] = true;
+    expect(
+      await plugin.onRequest?.(authenticatedRequest("synthetic-secret"), pluginContext, ctx),
+    ).toBeUndefined();
+    expect(key).not.toHaveBeenCalled();
+  });
+
+  it("bypasses custom auth marked by the auth plugin without identity", async () => {
+    const plugin = withCache();
+    plugin.setup?.(pluginContext);
+    const req: SendRequest = {
+      protocol: "rest",
+      input: { method: "GET", url: "/me?custom=synthetic-secret" },
+    };
+    for (let i = 0; i < 2; i++) {
+      const ctx = context(String(i));
+      ctx.state["@hyperttp/auth.applied"] = true;
+      expect(await plugin.onRequest?.(req, pluginContext, ctx)).toBeUndefined();
+      plugin.onResponse?.(response("private"), req, pluginContext, ctx);
+    }
+  });
+
   it("caches a custom protocol and passes RequestContext to callbacks", async () => {
     const key = vi.fn(
       (req: SendRequest, ctx?: RequestContext) =>
