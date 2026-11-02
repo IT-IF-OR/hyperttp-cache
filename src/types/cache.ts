@@ -5,7 +5,10 @@ export type { CacheEntry } from "hcacher";
 
 /** Configuration options for the cache manager. */
 export interface CacheManagerOptions extends HcacherOptions {
-  /** Returns a cache key for a request. Return undefined to bypass caching. */
+  /** Returns a credential-free cache key including a non-secret auth identity.
+   * Return undefined when authenticated requests have no safe identity scope.
+   * Custom auth headers, query credentials and protocol adapters require this callback.
+   */
   key?: (request: SendRequest, context?: RequestContext) => string | undefined;
 
   /** By default, only REST GET and HEAD requests use the cache. */

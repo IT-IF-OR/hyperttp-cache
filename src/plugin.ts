@@ -19,7 +19,25 @@ interface InFlightTrigger {
 const AUTH_IDENTITY_STATE_KEY = "@hyperttp/auth.identity";
 
 function defaultCacheKey(request: SendRequest, context?: RequestContext): string | undefined {
+  // Auth adapters may put credentials anywhere in the input. Require an explicit
+  // credential-free key rather than trying to redact an unknown request shape.
+  if (context?.state[AUTH_IDENTITY_STATE_KEY] !== undefined) return;
+
   try {
+    if (request.input && typeof request.input === "object") {
+      const { headers } = request.input as { headers?: HeadersInit };
+      if (headers) {
+        const normalized = new Headers(headers);
+        if (
+          ["authorization", "proxy-authorization", "cookie", "x-api-key"].some((name) =>
+            normalized.has(name),
+          )
+        ) {
+          return;
+        }
+      }
+    }
+
     return `${request.protocol}:${JSON.stringify({
       input: request.input,
       metadata: request.metadata,

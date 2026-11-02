@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.4] - 2026-11-02
+
+### Fixed
+
+- Bypassed default caching and in-flight deduplication for requests with `@hyperttp/auth.identity` or `Authorization`, `Proxy-Authorization`, `Cookie`, or `X-API-Key` headers, avoiding serialization of those authenticated inputs into cache keys.
+- Added regression tests for credential headers in object, `Headers`, and tuple formats, authenticated input serialization bypass, and identity isolation with explicit cache keys.
+- Verified concurrent auth request deduplication across token rotation, separation of different identities, and custom-key bypass when a safe identity is missing or invalid.
+
+### Changed
+
+- **Behavior change / migration:** Requests with auth identity or standard credential headers no longer use the default cache key. To retain caching and in-flight deduplication, configure an explicit credential-free `key` including a non-secret authentication identity; return `undefined` when that identity is unavailable.
+
+### Documentation
+
+- Documented auth-before-cache registration order, safe custom cache keys, and the need to explicitly handle query credentials, arbitrary API-key headers, and custom protocol adapters.
+- Corrected the README configuration type and supported option names.
+
 ## [2.0.3] - 2026-10-20
 
 ### Fixed
