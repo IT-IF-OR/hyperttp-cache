@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../src/index.ts"],
+  "sourcesContent": ["export { withCache } from \"./plugin.js\";\nexport type { CacheEntry, CacheManagerOptions } from \"./types/cache.js\";\nexport { CacheManager } from \"hcacher\";\nexport type { CacheEvents } from \"hcacher\";\n"],
+  "mappings": "aAAA,OAAS,cAAiB,cAE1B,OAAS,iBAAoB",
+  "names": []
+}
