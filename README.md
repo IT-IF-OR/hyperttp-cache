@@ -9,7 +9,7 @@ High-performance LRU caching plugin for Hyperttp with TTL support and concurrent
 - In-memory LRU cache with configurable TTL and size limits.
 - Concurrent request deduplication and cache stampede protection.
 - HTTP revalidation with `ETag` and `Last-Modified`.
-- Core v2 plugin lifecycle integration.
+- Core3 request-settlement integration (`@hyperttp/types ^0.5.0`).
 
 ## Installation
 
@@ -35,6 +35,19 @@ const response = await client.get("https://api.example.com/data");
 Configure the plugin with the exported `CacheManagerOptions` type. Cache behavior is controlled by
 `enabled`, `ttl`, `maxSize`, `touchOnGet`, `key`, `shouldCache`, and `shouldStoreResponse`.
 By default, only successful REST GET/HEAD responses are stored.
+
+On Core3, storage and in-flight followers use the final settlement outcome, after blocking
+response transformations and error recovery. Final cache hits and followers skip duplicate
+response transformations via `acceptFinalResponse`. A resolved response with `ok: false`
+is forwarded to followers but is not stored by default. Cache policy/storage errors during
+settlement are diagnostic only and do not strand followers.
+
+Contexts without `onSettled` retain response/error-hook behavior and cannot guarantee final
+outcomes. Place metrics/observation plugins before the cache if they must observe hits and
+followers: a cache short-circuit skips later request hooks. In-flight followers do not yet
+support independent cancellation; streaming or non-cloneable payloads are not independently
+replayable and should be excluded with `shouldCache`/`shouldStoreResponse`.
+
 
 ## Authentication and cache keys
 

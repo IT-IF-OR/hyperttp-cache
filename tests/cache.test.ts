@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   PluginContext,
   RequestContext,
+  RequestOutcome,
   SendRequest,
   UniversalResponse,
 } from "@hyperttp/types";
@@ -323,5 +324,122 @@ describe("withCache", () => {
       data: "ok",
     });
     expect(await plugin.onRequest?.(post, pluginContext, context("post"))).toBeUndefined();
+  });
+});
+
+function settlingContext(id: string) {
+  const callbacks: ((outcome: RequestOutcome) => void | Promise<void>)[] = [];
+  const ctx: RequestContext = {
+    ...context(id),
+    onSettled: (callback) => {
+      callbacks.push(callback);
+    },
+    acceptFinalResponse: vi.fn((response) => response),
+  };
+  return {
+    ctx,
+    settle: async (outcome: RequestOutcome) => {
+      for (const callback of callbacks.splice(0)) await callback(outcome);
+    },
+  };
+}
+
+describe("Core3 settlement", () => {
+  it("publishes only the final recovered/transformed response and accepts hits/followers", async () => {
+    const store = vi.fn(() => true);
+    const plugin = withCache({
+      shouldCache: () => true,
+      key: () => "same",
+      shouldStoreResponse: store,
+    });
+    plugin.setup?.(pluginContext);
+    const req = request();
+    const leader = settlingContext("leader");
+    const follower = settlingContext("follower");
+    plugin.onRequest?.(req, pluginContext, leader.ctx);
+    const waiting = plugin.onRequest?.(req, pluginContext, follower.ctx);
+    plugin.onError?.(new Error("recovered later"), req, pluginContext, leader.ctx);
+    plugin.onResponse?.(response("intermediate"), req, pluginContext, leader.ctx);
+    expect(store).not.toHaveBeenCalled();
+    const final = response({ value: "final" });
+    await leader.settle({ ok: true, response: final });
+    const received = await waiting;
+    expect(received).toMatchObject({ data: { value: "final" } });
+    expect(store).toHaveBeenCalledExactlyOnceWith(final, req, leader.ctx);
+    expect(follower.ctx.acceptFinalResponse).toHaveBeenCalledWith(received);
+    const hit = settlingContext("hit");
+    const cached = await plugin.onRequest?.(req, pluginContext, hit.ctx);
+    expect(cached).toMatchObject({ data: { value: "final" } });
+    expect(cached).not.toBe(received);
+    expect(hit.ctx.acceptFinalResponse).toHaveBeenCalledWith(cached);
+  });
+
+  it("rejects followers on final response-hook failure without caching preliminary success", async () => {
+    const plugin = withCache({ shouldCache: () => true, key: () => "same" });
+    plugin.setup?.(pluginContext);
+    const req = request();
+    const leader = settlingContext("leader");
+    plugin.onRequest?.(req, pluginContext, leader.ctx);
+    const waiting = plugin.onRequest?.(req, pluginContext, settlingContext("follower").ctx);
+    plugin.onResponse?.(response("preliminary"), req, pluginContext, leader.ctx);
+    const error = new Error("late transform failed");
+    const rejected = expect(waiting).rejects.toBe(error);
+    await leader.settle({ ok: false, error });
+    await rejected;
+    expect(plugin.onRequest?.(req, pluginContext, settlingContext("retry").ctx)).toBeUndefined();
+  });
+
+  it("does not let an old follower settle a newer producer for the same key", async () => {
+    const plugin = withCache({
+      shouldCache: () => true,
+      key: () => "same",
+      shouldStoreResponse: () => false,
+    });
+    plugin.setup?.(pluginContext);
+    const req = request();
+    const first = settlingContext("first");
+    const oldFollower = settlingContext("old-follower");
+    plugin.onRequest?.(req, pluginContext, first.ctx);
+    const oldWaiting = plugin.onRequest?.(req, pluginContext, oldFollower.ctx);
+    await first.settle({ ok: true, response: response("first") });
+    await oldWaiting;
+    const next = settlingContext("next");
+    expect(plugin.onRequest?.(req, pluginContext, next.ctx)).toBeUndefined();
+    const waiting = plugin.onRequest?.(req, pluginContext, settlingContext("next-follower").ctx);
+    plugin.onResponse?.(response("old"), req, pluginContext, oldFollower.ctx);
+    await oldFollower.settle({ ok: true, response: response("old") });
+    await next.settle({ ok: true, response: response("next") });
+    await expect(waiting).resolves.toMatchObject({ data: "next" });
+  });
+
+  it("releases followers even when the storage predicate throws", async () => {
+    const error = new Error("storage policy failed");
+    const plugin = withCache({
+      shouldCache: () => true,
+      key: () => "same",
+      shouldStoreResponse: () => {
+        throw error;
+      },
+    });
+    plugin.setup?.(pluginContext);
+    const req = request();
+    const leader = settlingContext("leader");
+    plugin.onRequest?.(req, pluginContext, leader.ctx);
+    const waiting = plugin.onRequest?.(req, pluginContext, settlingContext("follower").ctx);
+    await expect(leader.settle({ ok: true, response: response("final") })).rejects.toBe(error);
+    await expect(waiting).resolves.toMatchObject({ data: "final" });
+    expect(plugin.onRequest?.(req, pluginContext, settlingContext("retry").ctx)).toBeUndefined();
+  });
+
+  it("distinguishes a resolved non-ok protocol response from a rejected request", async () => {
+    const plugin = withCache({ shouldCache: () => true, key: () => "same" });
+    plugin.setup?.(pluginContext);
+    const req = request();
+    const leader = settlingContext("leader");
+    plugin.onRequest?.(req, pluginContext, leader.ctx);
+    const waiting = plugin.onRequest?.(req, pluginContext, settlingContext("follower").ctx);
+    await leader.settle({ ok: true, response: response("denied", false) });
+    await expect(waiting).resolves.toMatchObject({ ok: false, data: "denied" });
+    expect(plugin.onRequest?.(req, pluginContext, settlingContext("retry").ctx)).toBeUndefined();
   });
 });

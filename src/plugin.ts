@@ -1,7 +1,13 @@
 import type { CacheManagerOptions, LightweightResponse } from "./types/cache.js";
 import { CacheManager } from "hcacher";
 import { createHttpResponse, createResponseSnapshot } from "./utils/createHttpResponse.js";
-import type { HyperPlugin, RequestContext, SendRequest, UniversalResponse } from "@hyperttp/types";
+import type {
+  HyperPlugin,
+  RequestContext,
+  RequestOutcome,
+  SendRequest,
+  UniversalResponse,
+} from "@hyperttp/types";
 
 declare module "@hyperttp/types" {
   interface HyperClientOptions {
@@ -77,17 +83,6 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
   const inFlight = new Map<string, InFlightTrigger>();
   const requestKeys = new WeakMap<RequestContext, string>();
 
-  function getRequestKey(request: SendRequest, context?: RequestContext): string | undefined {
-    if (context) {
-      const savedKey = requestKeys.get(context);
-      if (savedKey) return savedKey;
-    }
-
-    const key = cacheKey(request, context);
-    if (key && context) requestKeys.set(context, key);
-    return key;
-  }
-
   function takeRequestKey(request: SendRequest, context?: RequestContext): string | undefined {
     if (context) {
       const key = requestKeys.get(context);
@@ -96,6 +91,38 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
     }
 
     return cacheKey(request, context);
+  }
+
+  function finish(
+    key: string,
+    request: SendRequest,
+    context: RequestContext | undefined,
+    outcome: RequestOutcome,
+  ): void {
+    const trigger = inFlight.get(key);
+    inFlight.delete(key);
+    if (!outcome.ok) {
+      trigger?.listeners.forEach((listener) => listener.reject(outcome.error));
+      return;
+    }
+
+    let snapshot: LightweightResponse<unknown>;
+    try {
+      snapshot = createResponseSnapshot(outcome.response);
+    } catch (error) {
+      trigger?.listeners.forEach((listener) => listener.reject(error));
+      throw error;
+    }
+    try {
+      if (shouldStoreResponse(outcome.response, request, context)) cache.set(key, snapshot);
+    } finally {
+      // A cache policy/storage failure must not strand successful followers.
+      trigger?.listeners.forEach((listener) => listener.resolve(createHttpResponse(snapshot)));
+    }
+  }
+
+  function accept(response: UniversalResponse, context?: RequestContext): UniversalResponse {
+    return context?.acceptFinalResponse?.(response) ?? response;
   }
 
   return {
@@ -118,27 +145,35 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
         return;
       if (!shouldCache(request, context)) return;
 
-      const key = getRequestKey(request, context);
+      const key = cacheKey(request, context);
       if (!key) return;
 
       const cachedEntry = cache.getEntry(key);
       if (cachedEntry) {
         if (context) requestKeys.delete(context);
-        return createHttpResponse(cachedEntry.data);
+        return accept(createHttpResponse(cachedEntry.data), context);
       }
 
       const currentInFlight = inFlight.get(key);
       if (currentInFlight) {
         return new Promise<UniversalResponse<unknown>>((resolve, reject) => {
-          currentInFlight.listeners.push({ resolve, reject });
+          currentInFlight.listeners.push({
+            resolve: (response) => resolve(accept(response, context)),
+            reject,
+          });
         });
       }
 
       inFlight.set(key, { listeners: [] });
+      if (context) requestKeys.set(context, key);
+      context?.onSettled?.((outcome) => {
+        requestKeys.delete(context);
+        finish(key, request, context, outcome);
+      });
     },
 
     onResponse(response, request, _, context) {
-      if (!request) return;
+      if (!request || context?.onSettled) return;
 
       const key = context
         ? takeRequestKey(request, context)
@@ -147,18 +182,11 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
           : undefined;
       if (!key) return;
 
-      const trigger = inFlight.get(key);
-      const snapshot = createResponseSnapshot(response);
-      if (shouldStoreResponse(response, request, context)) {
-        cache.set(key, snapshot);
-      }
-
-      inFlight.delete(key);
-      trigger?.listeners.forEach((listener) => listener.resolve(createHttpResponse(snapshot)));
+      finish(key, request, context, { ok: true, response });
     },
 
     onError(error, request, _, context) {
-      if (!request) return;
+      if (!request || context?.onSettled) return;
 
       const key = context
         ? takeRequestKey(request, context)
@@ -167,11 +195,7 @@ export function withCache(options?: CacheManagerOptions): HyperPlugin {
           : undefined;
       if (!key) return;
 
-      const trigger = inFlight.get(key);
-      if (trigger) {
-        inFlight.delete(key);
-        trigger.listeners.forEach((listener) => listener.reject(error));
-      }
+      finish(key, request, context, { ok: false, error });
     },
   };
 }
