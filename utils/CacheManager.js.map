@@ -2,6 +2,6 @@
   "version": 3,
   "sources": ["../../src/utils/CacheManager.ts"],
   "sourcesContent": ["export { CacheManager } from \"hcacher\";\nexport type { CacheEvents } from \"hcacher\";\n"],
-  "mappings": "aAAA,OAAS,iBAAoB",
-  "names": []
+  "mappings": "AAAA,OAAS,gBAAAA,MAAoB",
+  "names": ["CacheManager"]
 }

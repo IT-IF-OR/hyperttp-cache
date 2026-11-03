@@ -1,7 +1,16 @@
 {
   "name": "@hyperttp/cache",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "High-performance LRU caching plugin for Hyperttp client",
+  "keywords": [
+    "hyperttp"
+  ],
+  "license": "MIT",
+  "author": "dirold2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IT-IF-OR/hyperttp-cache.git"
+  },
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",
@@ -13,18 +22,9 @@
     },
     "./package.json": "./package.json"
   },
-  "keywords": [
-    "hyperttp"
-  ],
-  "author": "dirold2",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/IT-IF-OR/hyperttp-cache.git"
-  },
   "peerDependencies": {
-    "@hyperttp/types": "^0.5.0",
+    "@hyperttp/types": "^0.5.3",
     "hcacher": "^0.3.0"
   },
-  "private": false
+  "private": true
 }
