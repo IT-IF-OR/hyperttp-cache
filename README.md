@@ -48,7 +48,6 @@ followers: a cache short-circuit skips later request hooks. In-flight followers 
 support independent cancellation; streaming or non-cloneable payloads are not independently
 replayable and should be excluded with `shouldCache`/`shouldStoreResponse`.
 
-
 ## Authentication and cache keys
 
 Register `withAuth()` before `withCache()`. The default key bypasses requests with
