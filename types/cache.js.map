@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["cache.js"],
+  "sourcesContent": ["export {};\n//# sourceMappingURL=cache.js.map"],
+  "mappings": "aAAA",
+  "names": []
+}
